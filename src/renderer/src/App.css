@@ -145,8 +145,10 @@ button.primary::before, button.secondary::before { content: "> "; opacity: 0.7; 
 /* preview: checkerboard escuro para transparencia */
 .viewer {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  /* "safe center": centraliza, mas quando a imagem e maior que a area ela cai
+     pro inicio (esquerda/topo) em vez de ser cortada atras da sidebar */
+  align-items: safe center;
+  justify-content: safe center;
   overflow: auto;
   background:
     repeating-conic-gradient(#0c1113 0% 25%, #10171a 0% 50%) 50% / 22px 22px;
