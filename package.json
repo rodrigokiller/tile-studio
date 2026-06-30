@@ -1,0 +1,30 @@
+{
+  "name": "tile-studio",
+  "version": "0.1.0",
+  "description": "Editor/visualizador de tiles graficos de consoles antigos (estilo Tile Molester), moderno em TypeScript + Electron. Parte do suite com o TIM Studio.",
+  "type": "module",
+  "license": "MIT",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview"
+  },
+  "dependencies": {
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/pngjs": "^6.0.4",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "electron": "^30.0.0",
+    "electron-vite": "^2.1.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tsx": "^4.7.1",
+    "typescript": "^5.4.0",
+    "vite": "^5.1.0"
+  }
+}

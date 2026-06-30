@@ -1,0 +1,312 @@
+/* TIM Studio - tema retro-monospace (terminal / PSX dev console) */
+
+:root {
+  --bg: #0b0e10;
+  --panel: #0f1417;
+  --panel2: #141b1f;
+  --line: #1f2a30;
+  --line-bright: #2c3d45;
+  --text: #cfe6dd;
+  --muted: #5f7d76;
+  --accent: #34e2a0;
+  --accent-dim: rgba(52, 226, 160, 0.14);
+  --amber: #ffb454;
+  --mono: "Cascadia Mono", "JetBrains Mono", "Fira Code", "SF Mono", "Consolas",
+    "Liberation Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  font-family: var(--mono);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  letter-spacing: 0.2px;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* scanlines + vinheta sutis sobre tudo (nao captura clique) */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0) 0px,
+      rgba(0, 0, 0, 0) 2px,
+      rgba(0, 0, 0, 0.05) 3px
+    ),
+    radial-gradient(120% 120% at 50% 40%, rgba(0, 0, 0, 0) 60%, rgba(0, 0, 0, 0.35) 100%);
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 250px 1fr 250px;
+  height: 100vh;
+}
+
+.sidebar, .inspector {
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+.inspector { border-right: none; border-left: 1px solid var(--line); }
+
+/* botoes estilo terminal: cantos quadrados, maiusculo, borda que acende */
+button.primary, button.secondary {
+  font-family: var(--mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 9px 12px;
+  border-radius: 0;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+button.primary {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+button.primary:hover { background: var(--accent); color: #04130d; }
+button.secondary {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line-bright);
+}
+button.secondary:hover { color: var(--accent); border-color: var(--accent); }
+button.primary::before, button.secondary::before { content: "> "; opacity: 0.7; }
+
+.btnrow { display: flex; gap: 8px; margin-top: 6px; }
+.btnrow button { flex: 1; }
+
+.folder {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+.folder::before { content: "~ "; }
+
+.search {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line-bright);
+  border-radius: 0;
+  color: var(--text);
+  caret-color: var(--accent);
+  padding: 7px 9px;
+  outline: none;
+}
+.search:focus { border-color: var(--accent); }
+
+.filelist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  border-top: 1px solid var(--line);
+}
+.filelist li {
+  padding: 5px 9px 5px 18px;
+  position: relative;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--text);
+}
+.filelist li:hover { background: var(--panel2); }
+.filelist li.sel { background: var(--accent-dim); color: var(--accent); }
+.filelist li.sel::before {
+  content: ">";
+  position: absolute;
+  left: 6px;
+  color: var(--accent);
+}
+
+/* preview: checkerboard escuro para transparencia */
+.viewer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  background:
+    repeating-conic-gradient(#0c1113 0% 25%, #10171a 0% 50%) 50% / 22px 22px;
+}
+.canvas-wrap { padding: 28px; }
+canvas {
+  display: block;
+  border: 1px solid var(--line-bright);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 10px 50px rgba(0, 0, 0, 0.6),
+    0 0 60px rgba(52, 226, 160, 0.06);
+}
+
+.empty { color: var(--muted); font-size: 12px; }
+.empty::before { content: ""; }
+
+/* marca / titulo */
+.inspector h2 {
+  font-size: 14px;
+  margin: 0 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  color: var(--accent);
+  font-weight: 700;
+}
+.inspector h2 .ver {
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--muted);
+  margin-left: 4px;
+}
+.inspector h2 .caret {
+  color: var(--accent);
+  animation: blink 1.1s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.kv span {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 11px;
+}
+.kv b {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zoom {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 8px;
+}
+.zoom input[type="range"] { -webkit-appearance: none; height: 3px; background: var(--line-bright); outline: none; }
+.zoom input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 16px;
+  background: var(--accent);
+  cursor: pointer;
+  border-radius: 0;
+}
+
+/* paleta (CLUT) */
+.palette { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.palrow { display: flex; flex-wrap: wrap; gap: 3px; }
+.palrow button {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  border: 1px solid var(--line-bright);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 0;
+}
+.palrow button.on { border-color: var(--accent); color: var(--accent); }
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  background:
+    repeating-conic-gradient(#0c1113 0% 25%, #10171a 0% 50%) 0 / 12px 12px;
+}
+.sw { width: 12px; height: 12px; outline: 1px solid rgba(0, 0, 0, 0.35); }
+
+/* modo tile / raw */
+.tiletoggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 10px;
+  cursor: pointer;
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  padding: 8px;
+}
+.tile label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.tile label.chk { justify-content: flex-start; }
+.tile input[type="number"],
+.tile select {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line-bright);
+  color: var(--text);
+  padding: 3px 6px;
+  border-radius: 0;
+  width: 84px;
+}
+.tile input[type="checkbox"],
+.tiletoggle input[type="checkbox"] { accent-color: var(--accent); }
+
+.hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.msg {
+  font-size: 11px;
+  color: var(--amber);
+  word-break: break-all;
+  border-left: 2px solid var(--amber);
+  padding-left: 7px;
+  margin-top: 4px;
+}
+.msg::before { content: "[ ! ] "; }
+
+/* scrollbars discretas */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line-bright); }
+::-webkit-scrollbar-track { background: transparent; }
+
+.nav { display: flex; gap: 4px; margin-top: 4px; }
+.nav button { flex: 1; }
