@@ -4,6 +4,7 @@ const api = {
   openFile: (): Promise<string | null> => ipcRenderer.invoke("dialog:openFile"),
   openPng: (): Promise<string | null> => ipcRenderer.invoke("dialog:openPng"),
   savePng: (def: string): Promise<string | null> => ipcRenderer.invoke("dialog:savePng", def),
+  saveBin: (def: string): Promise<string | null> => ipcRenderer.invoke("dialog:saveBin", def),
   readFile: (p: string): Promise<Uint8Array> => ipcRenderer.invoke("fs:readFile", p),
   writeFile: (p: string, data: Uint8Array): Promise<boolean> =>
     ipcRenderer.invoke("fs:writeFile", p, data),

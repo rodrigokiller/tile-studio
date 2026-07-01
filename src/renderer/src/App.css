@@ -249,6 +249,29 @@ canvas {
 }
 .sw { width: 12px; height: 12px; outline: 1px solid rgba(0, 0, 0, 0.35); }
 
+/* celulas da paleta editavel: quadrado colorido com color-picker escondido dentro */
+.swatches { padding: 2px; }
+.palcell {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  display: inline-block;
+  cursor: pointer;
+  outline: 1px solid rgba(0, 0, 0, 0.5);
+  box-sizing: border-box;
+}
+.palcell.on { outline: 2px solid var(--accent); z-index: 1; }
+.palcell input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
 /* modo tile / raw */
 .tiletoggle {
   display: flex;

@@ -41,6 +41,10 @@ ipcMain.handle("dialog:savePng", async (_e, def: string) => {
   });
   return r.canceled ? null : r.filePath;
 });
+ipcMain.handle("dialog:saveBin", async (_e, def: string) => {
+  const r = await dialog.showSaveDialog({ defaultPath: def });
+  return r.canceled ? null : r.filePath;
+});
 ipcMain.handle("fs:readFile", (_e, p: string) => readFileSync(p));
 ipcMain.handle("fs:writeFile", (_e, p: string, data: Uint8Array) => {
   writeFileSync(p, Buffer.from(data));
