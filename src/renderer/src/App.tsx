@@ -138,8 +138,15 @@ export function App(): JSX.Element {
   const open = useCallback(async (p?: string) => {
     const file = p ?? (await window.api.openFile());
     if (!file) return;
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await window.api.readFile(file));
+    } catch {
+      setMsg(`nao consegui abrir: ${file}`);
+      return;
+    }
     setPath(file);
-    setRaw(new Uint8Array(await window.api.readFile(file)));
+    setRaw(bytes);
     setOffset(0);
     setDirty(false);
     setMsg(null);
@@ -147,6 +154,8 @@ export function App(): JSX.Element {
     undoStack.current = [];
     redoStack.current = [];
     setHistLen({ u: 0, r: 0 });
+    // registra nos recentes (alimenta o menu "Abrir recente" e o reabrir-ao-iniciar)
+    window.api.setLastFile(file);
   }, []);
 
   const onDrop = useCallback(
@@ -157,6 +166,19 @@ export function App(): JSX.Element {
     },
     [open],
   );
+
+  // menu (Abrir arquivo / Abrir recente) manda o caminho pra carregar aqui
+  useEffect(() => window.api.onOpenFile((p) => open(p)), [open]);
+
+  // ao iniciar: reabre o ultimo arquivo automaticamente (se ainda existir)
+  useEffect(() => {
+    (async () => {
+      const last = await window.api.getLastFile();
+      if (last) open(last);
+    })();
+    // so na montagem; open e estavel (useCallback [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const view = useMemo(() => {
     if (!raw) return null;

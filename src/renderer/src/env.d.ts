@@ -9,5 +9,8 @@ interface Window {
     readFile: (p: string) => Promise<Uint8Array>;
     writeFile: (p: string, data: Uint8Array) => Promise<boolean>;
     pathForFile: (f: File) => string;
+    setLastFile: (p: string) => Promise<void>;
+    getLastFile: () => Promise<string>;
+    onOpenFile: (cb: (path: string) => void) => () => void;
   };
 }
