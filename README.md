@@ -32,8 +32,9 @@ exportar.
     pixel (mudancas de bytes); o estado de visualizacao nunca entra na pilha; historico
     capado em 200 entradas (descarta as mais antigas);
   - **cor de pintura** clara: swatch grande no inspector com indice/hex; em bpp indexado
-    clicar numa celula da paleta seleciona a cor (destaque forte); em cor direta o swatch
-    e um color-picker de RGB;
+    clique-esquerdo numa celula SELECIONA a cor de pintura (destaque forte),
+    shift+clique ou clique-direito EDITA a cor daquele indice, e clicar no swatch grande
+    edita a cor selecionada; em cor direta o swatch e um color-picker de RGB;
   - **paleta editavel** (color-picker por indice), carregar de PNG, ou rampa de cinza padrao;
   - **Salvar** (grava no arquivo), **Salvar como**, **Exportar PNG**;
   - **presets salvaveis** (persistidos em localStorage):
