@@ -260,7 +260,11 @@ canvas {
   outline: 1px solid rgba(0, 0, 0, 0.5);
   box-sizing: border-box;
 }
-.palcell.on { outline: 2px solid var(--accent); z-index: 1; }
+.palcell.on {
+  outline: 2px solid var(--accent);
+  box-shadow: 0 0 0 2px var(--bg), 0 0 8px var(--accent);
+  z-index: 1;
+}
 .palcell input[type="color"] {
   position: absolute;
   inset: 0;
@@ -271,6 +275,57 @@ canvas {
   padding: 0;
   cursor: pointer;
 }
+
+/* toggle de ferramenta: editar vs navegar (pan) */
+.toolrow { display: flex; gap: 8px; }
+.toolrow .tool {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 8px 10px;
+  border-radius: 0;
+  cursor: pointer;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line-bright);
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.toolrow .tool:hover { color: var(--accent); border-color: var(--accent); }
+.toolrow .tool.on {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.toolrow .tool.on::before { content: "> "; opacity: 0.7; }
+
+/* COR DE PINTURA: swatch grande no inspector */
+.curcolor { display: flex; flex-direction: column; gap: 5px; margin-bottom: 6px; }
+.curlabel {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.curbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  background: var(--panel2);
+  border: 1px solid var(--line-bright);
+}
+.curswatch {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  outline: 1px solid rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.curmeta { display: flex; flex-direction: column; gap: 2px; }
+.curmeta b { color: var(--accent); font-size: 13px; letter-spacing: 1px; }
+.curmeta span { color: var(--muted); font-size: 11px; }
 
 /* modo tile / raw */
 .tiletoggle {

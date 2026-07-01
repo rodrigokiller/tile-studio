@@ -4,6 +4,7 @@ import {
   grayPaletteRGBA,
   tileSizeBytes,
   writePixelIndex,
+  readPixelIndex,
   locatePixel,
   type TileConfig,
   type PixelMode,
@@ -46,6 +47,10 @@ const hex2 = (n: number): string => n.toString(16).padStart(2, "0");
 const rgbaToHex = (p: Uint8Array, i: number): string =>
   `#${hex2(p[i * 4])}${hex2(p[i * 4 + 1])}${hex2(p[i * 4 + 2])}`;
 
+// Uma edicao de pixel = 1 byte que mudou (offset, valor antigo, valor novo).
+// Um "stroke" (do mousedown ao mouseup) agrupa varias dessas mudancas.
+type ByteChange = { off: number; old: number; neu: number };
+
 // -----------------------------------------------------------------------------
 
 export function App(): JSX.Element {
@@ -64,13 +69,20 @@ export function App(): JSX.Element {
   const [zoom, setZoom] = useState(4);
 
   const [palette, setPalette] = useState<Uint8Array | null>(null);
-  const [palIndex, setPalIndex] = useState(1); // cor "de frente" selecionada
+  const [palIndex, setPalIndex] = useState(1); // cor "de frente" (a cor que pinta)
   const [showGrid, setShowGrid] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // ferramenta ativa: editar (pinta) ou navegar (pan). Espaco/Ctrl = pan temporario.
+  const [tool, setTool] = useState<"edit" | "pan">("edit");
+  const [tempPan, setTempPan] = useState(false);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const viewerRef = useRef<HTMLElement>(null);
   const indexed = bpp <= 8;
   const ncolors = indexed ? 1 << bpp : 0;
+
+  const panning = tool === "pan" || tempPan;
 
   // paleta efetiva (cinza por padrao para bpp baixos)
   const effPal = useMemo(() => {
@@ -94,6 +106,11 @@ export function App(): JSX.Element {
     [bpp, mode, tileW, tileH, cols, tileRows, reverse, offset, effPal],
   );
 
+  // -- pilha de undo/redo: guarda SO edicoes de bytes (nunca estado de view) ---
+  const undoStack = useRef<ByteChange[][]>([]);
+  const redoStack = useRef<ByteChange[][]>([]);
+  const [histLen, setHistLen] = useState({ u: 0, r: 0 }); // so pra atualizar UI
+
   const open = useCallback(async (p?: string) => {
     const file = p ?? (await window.api.openFile());
     if (!file) return;
@@ -102,6 +119,10 @@ export function App(): JSX.Element {
     setOffset(0);
     setDirty(false);
     setMsg(null);
+    // arquivo novo: zera a historia de edicao
+    undoStack.current = [];
+    redoStack.current = [];
+    setHistLen({ u: 0, r: 0 });
   }, []);
 
   const onDrop = useCallback(
@@ -151,10 +172,50 @@ export function App(): JSX.Element {
   const bytesPerTileRow = bytesPerTile * Math.max(1, cols);
   const step = (mult: number) => setOffset((o) => Math.max(0, o + bytesPerTileRow * mult));
 
+  // -- undo/redo: aplica um conjunto de mudancas de bytes ----------------------
+  const applyChanges = useCallback((changes: ByteChange[], useOld: boolean) => {
+    setRaw((cur) => {
+      if (!cur) return cur;
+      const next = new Uint8Array(cur);
+      for (const c of changes) next[c.off] = useOld ? c.old : c.neu;
+      return next;
+    });
+    setDirty(true);
+  }, []);
+
+  const undo = useCallback(() => {
+    const changes = undoStack.current.pop();
+    if (!changes) return;
+    applyChanges(changes, true); // reverte pros valores antigos
+    redoStack.current.push(changes);
+    setHistLen({ u: undoStack.current.length, r: redoStack.current.length });
+    setMsg("desfez edicao");
+  }, [applyChanges]);
+
+  const redo = useCallback(() => {
+    const changes = redoStack.current.pop();
+    if (!changes) return;
+    applyChanges(changes, false); // reaplica os valores novos
+    undoStack.current.push(changes);
+    setHistLen({ u: undoStack.current.length, r: redoStack.current.length });
+    setMsg("refez edicao");
+  }, [applyChanges]);
+
+  // teclado: navegacao + undo/redo. Undo/redo so quando o foco NAO esta num
+  // campo de texto (input/select) -- assim o Ctrl+Z nativo dos campos continua ok.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "SELECT") return;
+      const inField = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
+
+      // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z -> undo/redo de EDICAO (nunca de view)
+      if ((e.ctrlKey || e.metaKey) && !inField) {
+        const k = e.key.toLowerCase();
+        if (k === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
+        if ((k === "z" && e.shiftKey) || k === "y") { e.preventDefault(); redo(); return; }
+      }
+
+      if (inField) return;
       if (e.key === "ArrowDown") { e.preventDefault(); step(1); }
       else if (e.key === "ArrowUp") { e.preventDefault(); step(-1); }
       else if (e.key === "PageDown") { e.preventDefault(); step(tileRows); }
@@ -162,42 +223,106 @@ export function App(): JSX.Element {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [bytesPerTileRow, tileRows]);
+  }, [bytesPerTileRow, tileRows, undo, redo]);
 
-  // -- edicao de pixel (clique/arraste no canvas) -----------------------------
+  // Espaco (segurar) = pan temporario enquanto o foco nao esta num campo.
+  useEffect(() => {
+    const isField = () => {
+      const tag = (document.activeElement as HTMLElement)?.tagName;
+      return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
+    };
+    const down = (e: KeyboardEvent) => {
+      if (e.code === "Space" && !isField()) { e.preventDefault(); setTempPan(true); }
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code === "Space") setTempPan(false);
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
+
+  // -- pintura (agrupa mudancas do stroke atual pra 1 entrada de undo) ---------
+  const stroke = useRef<Map<number, ByteChange> | null>(null);
+
   const paintAt = useCallback(
     (clientX: number, clientY: number) => {
       const cv = canvasRef.current;
-      if (!cv || !raw) return;
+      if (!cv || !raw || !indexed || !stroke.current) return;
       const rect = cv.getBoundingClientRect();
       const x = Math.floor(((clientX - rect.left) / rect.width) * cv.width);
       const y = Math.floor(((clientY - rect.top) / rect.height) * cv.height);
       if (x < 0 || y < 0 || x >= cv.width || y >= cv.height) return;
       const loc = locatePixel(cfg, x, y);
-      // valor a gravar: para indexado, o indice de paleta selecionado;
-      // para cor direta, a cor da paleta selecionada convertida (aprox).
-      let value = palIndex;
-      if (bpp === 16 && effPal === undefined && palette) {
-        value = 0; // sem paleta pra cor direta, nao pinta
-      }
+      const value = palIndex;
+
+      // snapshot dos bytes antes: le, escreve, e compara pra registrar so o que mudou
+      const before = new Uint8Array(raw);
+      const prevIdx = readPixelIndex(raw, cfg, loc.tileBase, loc.px, loc.py);
+      if (prevIdx === value) return; // ja e essa cor, nada a fazer
       writePixelIndex(raw, cfg, loc.tileBase, loc.px, loc.py, value);
+      // registra os bytes que mudaram neste pixel (planar toca varios bytes)
+      const tsz = tileSizeBytes(cfg);
+      for (let o = loc.tileBase; o < loc.tileBase + tsz && o < raw.length; o++) {
+        if (before[o] !== raw[o]) {
+          const existing = stroke.current.get(o);
+          // preserva o "old" da 1a vez que este byte mudou no stroke
+          stroke.current.set(o, { off: o, old: existing ? existing.old : before[o], neu: raw[o] });
+        }
+      }
       setRaw(new Uint8Array(raw)); // dispara re-render
       setDirty(true);
     },
-    [raw, cfg, palIndex, bpp, effPal, palette],
+    [raw, cfg, palIndex, indexed],
   );
 
   const dragging = useRef(false);
+  const panStart = useRef<{ x: number; y: number; sl: number; st: number } | null>(null);
+
   const onCanvasDown = (e: React.MouseEvent) => {
+    if (panning) {
+      // inicia pan: guarda posicao inicial e scroll atual do viewer
+      const v = viewerRef.current;
+      if (!v) return;
+      panStart.current = { x: e.clientX, y: e.clientY, sl: v.scrollLeft, st: v.scrollTop };
+      dragging.current = true;
+      e.preventDefault();
+      return;
+    }
     if (!indexed) return; // edicao de pixel so pra bpp indexado por enquanto
     dragging.current = true;
+    stroke.current = new Map(); // comeca um novo stroke
     paintAt(e.clientX, e.clientY);
   };
+
   const onCanvasMove = (e: React.MouseEvent) => {
-    if (dragging.current) paintAt(e.clientX, e.clientY);
+    if (!dragging.current) return;
+    if (panning) {
+      const v = viewerRef.current;
+      const ps = panStart.current;
+      if (!v || !ps) return;
+      v.scrollLeft = ps.sl - (e.clientX - ps.x);
+      v.scrollTop = ps.st - (e.clientY - ps.y);
+      return;
+    }
+    paintAt(e.clientX, e.clientY);
   };
+
+  // fim do stroke/pan em qualquer lugar: fecha o stroke e empilha no undo
   useEffect(() => {
-    const up = () => (dragging.current = false);
+    const up = () => {
+      dragging.current = false;
+      panStart.current = null;
+      if (stroke.current && stroke.current.size > 0) {
+        undoStack.current.push([...stroke.current.values()]);
+        redoStack.current = []; // nova edicao invalida o redo
+        setHistLen({ u: undoStack.current.length, r: 0 });
+      }
+      stroke.current = null;
+    };
     window.addEventListener("mouseup", up);
     return () => window.removeEventListener("mouseup", up);
   }, []);
@@ -275,11 +400,27 @@ export function App(): JSX.Element {
     else if (p === "tile16") { setTileW(16); setTileH(16); }
   };
 
+  const cursor = panning ? (dragging.current ? "grabbing" : "grab") : indexed ? "crosshair" : "default";
+
   return (
     <div className="app" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
       <aside className="sidebar">
         <button className="primary" onClick={() => open()}>Abrir arquivo</button>
         {path && <div className="folder" title={path}>{path}{dirty ? " *" : ""}</div>}
+
+        {/* toggle claro editar vs navegar */}
+        <div className="toolrow">
+          <button
+            className={"tool" + (tool === "edit" && !tempPan ? " on" : "")}
+            onClick={() => setTool("edit")}
+            title="Editar: clicar pinta pixels"
+          >Editar</button>
+          <button
+            className={"tool" + (panning ? " on" : "")}
+            onClick={() => setTool("pan")}
+            title="Navegar: clicar-e-arrastar move a imagem (pan)"
+          >Navegar</button>
+        </div>
 
         <div className="tile">
           <label>bpp
@@ -317,6 +458,11 @@ export function App(): JSX.Element {
           <button className="secondary" onClick={() => step(tileRows)}>{">>"}</button>
         </div>
 
+        <div className="btnrow">
+          <button className="secondary" onClick={undo} disabled={histLen.u === 0} title="Ctrl+Z">Desfazer</button>
+          <button className="secondary" onClick={redo} disabled={histLen.r === 0} title="Ctrl+Shift+Z / Ctrl+Y">Refazer</button>
+        </div>
+
         <label className="zoom">
           Zoom {zoom}×
           <input type="range" min={1} max={20} value={zoom} onChange={(e) => setZoom(+e.target.value)} />
@@ -330,7 +476,7 @@ export function App(): JSX.Element {
         {msg && <div className="msg">{msg}</div>}
       </aside>
 
-      <main className="viewer">
+      <main className="viewer" ref={viewerRef}>
         {view ? (
           <div className="canvas-wrap">
             <canvas
@@ -341,27 +487,39 @@ export function App(): JSX.Element {
                 width: view.width * zoom,
                 height: view.height * zoom,
                 imageRendering: "pixelated",
-                cursor: indexed ? "crosshair" : "default",
+                cursor,
               }}
             />
           </div>
         ) : (
-          <div className="empty">// abra um arquivo (ou arraste). clique nos tiles pra pintar. setas/PageUp/Down navegam.</div>
+          <div className="empty">// abra um arquivo (ou arraste). modo Editar: clique pinta. modo Navegar (ou segure Espaco): arraste move. setas/PageUp/Down navegam.</div>
         )}
       </main>
 
       <aside className="inspector">
-        <h2>tile studio<span className="caret">_</span><span className="ver">v0.2</span></h2>
+        <h2>tile studio<span className="caret">_</span><span className="ver">v0.3</span></h2>
 
         {indexed && (
           <div className="palette">
+            {/* COR ATUAL de pintura: swatch grande + rotulo */}
+            <div className="curcolor">
+              <div className="curlabel">Cor de pintura</div>
+              <div className="curbox">
+                <span className="curswatch" style={{ background: rgbaToHex(effPal!, palIndex) }} />
+                <div className="curmeta">
+                  <b>indice {palIndex}</b>
+                  <span>{rgbaToHex(effPal!, palIndex)}</span>
+                </div>
+              </div>
+            </div>
+
             <div className="kv"><span>Paleta</span><b>{palette ? "custom" : "cinza"} ({ncolors})</b></div>
             <div className="swatches">
               {Array.from({ length: ncolors }, (_, i) => (
                 <label
                   key={i}
                   className={"palcell" + (i === palIndex ? " on" : "")}
-                  title={`indice ${i}`}
+                  title={`indice ${i} -- clique pra pintar com esta cor`}
                   onClick={() => setPalIndex(i)}
                   style={{ background: rgbaToHex(effPal!, i) }}
                 >
@@ -378,12 +536,14 @@ export function App(): JSX.Element {
               <button className="secondary" onClick={loadPalette}>Paleta (PNG)</button>
               {palette && <button className="secondary" onClick={() => setPalette(null)}>Cinza</button>}
             </div>
-            <div className="hint">Cor selecionada: indice {palIndex}. Clique num tile pra pintar; clique no quadradinho pra abrir o color-picker.</div>
+            <div className="hint">Clique numa celula pra escolher a cor de pintura (ela fica destacada). Clique de novo abre o color-picker daquele indice.</div>
           </div>
         )}
 
         {view && (
           <>
+            <div className="kv"><span>Ferramenta</span><b>{panning ? "navegar (pan)" : "editar"}</b></div>
+            <div className="kv"><span>Historico</span><b>{histLen.u} desfazer / {histLen.r} refazer</b></div>
             <div className="kv"><span>Bytes/tile</span><b>{bytesPerTile}</b></div>
             <div className="kv"><span>Bytes/linha</span><b>{bytesPerTileRow}</b></div>
             <div className="kv"><span>Canvas</span><b>{view.width}×{view.height}</b></div>
@@ -392,8 +552,8 @@ export function App(): JSX.Element {
           </>
         )}
         <p className="hint">
-          Clone do Tile Molester. Fonte do Legend of Mana = preset "Fonte LoM"
-          (1bpp planar, tile 16×12). Mapas WM = 4bpp, tile 8×8, offset 20.
+          Clone do Tile Molester. Ctrl+Z desfaz edicoes de pixel (nao mexe em bpp/zoom/offset).
+          Segure Espaco pra pan temporario. Fonte LoM = 1bpp planar, tile 16×12.
         </p>
       </aside>
     </div>
