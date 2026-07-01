@@ -10,6 +10,16 @@ import {
   type TileConfig,
   type PixelMode,
 } from "../../tile";
+import {
+  BUILTIN_CONFIG_PRESETS,
+  BUILTIN_PALETTE_PRESETS,
+  loadCustomConfigs,
+  saveCustomConfigs,
+  loadCustomPalettes,
+  saveCustomPalettes,
+  type ConfigPreset,
+  type PalettePreset,
+} from "./presets";
 
 // teto do historico de undo (descarta as entradas mais antigas ao passar)
 const MAX_UNDO = 200;
@@ -82,6 +92,14 @@ export function App(): JSX.Element {
   // ferramenta ativa: editar (pinta) ou navegar (pan). Espaco/Ctrl = pan temporario.
   const [tool, setTool] = useState<"edit" | "pan">("edit");
   const [tempPan, setTempPan] = useState(false);
+
+  // presets: customizados (persistidos) + selecao atual nos dropdowns
+  const [customCfgs, setCustomCfgs] = useState<ConfigPreset[]>(() => loadCustomConfigs());
+  const [customPals, setCustomPals] = useState<PalettePreset[]>(() => loadCustomPalettes());
+  const [cfgPresetName, setCfgPresetName] = useState("");
+  const [palPresetName, setPalPresetName] = useState("");
+  const [selCfg, setSelCfg] = useState(""); // nome do preset de config selecionado
+  const [selPal, setSelPal] = useState(""); // nome da paleta selecionada
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<HTMLElement>(null);
@@ -411,12 +429,138 @@ export function App(): JSX.Element {
     <input type="number" value={v} min={min} onChange={(e) => set(Math.max(min, +e.target.value))} />
   );
 
-  // presets rapidos
-  const applyPreset = (p: "lomfont" | "tile8" | "tile16") => {
-    if (p === "lomfont") { setBpp(1); setMode("planar"); setTileW(16); setTileH(12); setCols(16); setReverse(false); setOffset(0); }
-    else if (p === "tile8") { setTileW(8); setTileH(8); }
-    else if (p === "tile16") { setTileW(16); setTileH(16); }
-  };
+  // -- presets de config -------------------------------------------------------
+  // lista completa (embutidos + customizados) pros dropdowns
+  const allCfgs = useMemo<ConfigPreset[]>(
+    () => [...BUILTIN_CONFIG_PRESETS, ...customCfgs],
+    [customCfgs],
+  );
+
+  // aplica um preset: seta o estado de VIEW inteiro de uma vez. NAO toca undo/redo,
+  // nem os bytes da imagem, nem o modo editar/navegar.
+  const applyConfigPreset = useCallback((p: ConfigPreset) => {
+    setBpp(p.bpp);
+    setMode(p.mode);
+    setReverse(p.reverse);
+    setTileW(p.tileW);
+    setTileH(p.tileH);
+    setCols(p.cols);
+    setOffset(p.offset);
+    setZoom(p.zoom);
+    setSelCfg(p.name);
+    setMsg(`preset aplicado: ${p.name}`);
+  }, []);
+
+  // salva a config atual como um preset customizado (ou sobrescreve se ja existir)
+  const saveConfigPreset = useCallback(() => {
+    const name = cfgPresetName.trim();
+    if (!name) { setMsg("de um nome pro preset"); return; }
+    if (BUILTIN_CONFIG_PRESETS.some((b) => b.name === name)) {
+      setMsg("nome reservado (embutido); escolha outro");
+      return;
+    }
+    const p: ConfigPreset = { name, bpp, mode, reverse, tileW, tileH, cols, offset, zoom, builtin: false };
+    setCustomCfgs((prev) => {
+      const next = [...prev.filter((x) => x.name !== name), p];
+      saveCustomConfigs(next);
+      return next;
+    });
+    setSelCfg(name);
+    setCfgPresetName("");
+    setMsg(`preset salvo: ${name}`);
+  }, [cfgPresetName, bpp, mode, reverse, tileW, tileH, cols, offset, zoom]);
+
+  const deleteConfigPreset = useCallback((name: string) => {
+    setCustomCfgs((prev) => {
+      const next = prev.filter((x) => x.name !== name);
+      saveCustomConfigs(next);
+      return next;
+    });
+    setSelCfg((s) => (s === name ? "" : s));
+    setMsg(`preset excluido: ${name}`);
+  }, []);
+
+  const renameConfigPreset = useCallback((oldName: string) => {
+    const nn = window.prompt("Novo nome do preset:", oldName);
+    const name = nn?.trim();
+    if (!name || name === oldName) return;
+    if (BUILTIN_CONFIG_PRESETS.some((b) => b.name === name) || customCfgs.some((x) => x.name === name)) {
+      setMsg("ja existe um preset com esse nome");
+      return;
+    }
+    setCustomCfgs((prev) => {
+      const next = prev.map((x) => (x.name === oldName ? { ...x, name } : x));
+      saveCustomConfigs(next);
+      return next;
+    });
+    setSelCfg((s) => (s === oldName ? name : s));
+  }, [customCfgs]);
+
+  // -- presets de paleta -------------------------------------------------------
+  const allPals = useMemo<PalettePreset[]>(
+    () => [...BUILTIN_PALETTE_PRESETS, ...customPals],
+    [customPals],
+  );
+
+  // aplica uma paleta salva: recorta/estica pras cores do bpp atual e seta.
+  const applyPalettePreset = useCallback((p: PalettePreset) => {
+    const src = Uint8Array.from(p.rgba);
+    const want = indexed ? ncolors : Math.max(1, p.rgba.length / 4);
+    const out = new Uint8Array(want * 4);
+    for (let i = 0; i < want; i++) {
+      if (i * 4 + 3 < src.length) out.set(src.subarray(i * 4, i * 4 + 4), i * 4);
+      else { out[i * 4] = out[i * 4 + 1] = out[i * 4 + 2] = 0; out[i * 4 + 3] = 255; }
+    }
+    setPalette(out);
+    setSelPal(p.name);
+    setMsg(`paleta aplicada: ${p.name}`);
+  }, [indexed, ncolors]);
+
+  const savePalettePreset = useCallback(() => {
+    const name = palPresetName.trim();
+    if (!name) { setMsg("de um nome pra paleta"); return; }
+    if (BUILTIN_PALETTE_PRESETS.some((b) => b.name === name)) {
+      setMsg("nome reservado (embutida); escolha outro");
+      return;
+    }
+    // salva a paleta efetiva atual (a que esta sendo mostrada)
+    const src = effPal ?? grayPaletteRGBA(ncolors || 16);
+    const p: PalettePreset = { name, rgba: [...src], builtin: false };
+    setCustomPals((prev) => {
+      const next = [...prev.filter((x) => x.name !== name), p];
+      saveCustomPalettes(next);
+      return next;
+    });
+    setSelPal(name);
+    setPalPresetName("");
+    setMsg(`paleta salva: ${name}`);
+  }, [palPresetName, effPal, ncolors]);
+
+  const deletePalettePreset = useCallback((name: string) => {
+    setCustomPals((prev) => {
+      const next = prev.filter((x) => x.name !== name);
+      saveCustomPalettes(next);
+      return next;
+    });
+    setSelPal((s) => (s === name ? "" : s));
+    setMsg(`paleta excluida: ${name}`);
+  }, []);
+
+  const renamePalettePreset = useCallback((oldName: string) => {
+    const nn = window.prompt("Novo nome da paleta:", oldName);
+    const name = nn?.trim();
+    if (!name || name === oldName) return;
+    if (BUILTIN_PALETTE_PRESETS.some((b) => b.name === name) || customPals.some((x) => x.name === name)) {
+      setMsg("ja existe uma paleta com esse nome");
+      return;
+    }
+    setCustomPals((prev) => {
+      const next = prev.map((x) => (x.name === oldName ? { ...x, name } : x));
+      saveCustomPalettes(next);
+      return next;
+    });
+    setSelPal((s) => (s === oldName ? name : s));
+  }, [customPals]);
 
   const cursor = panning ? (dragging.current ? "grabbing" : "grab") : "crosshair";
 
@@ -463,10 +607,44 @@ export function App(): JSX.Element {
           <label className="chk"><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> grid de tiles</label>
         </div>
 
-        <div className="btnrow">
-          <button className="secondary" onClick={() => applyPreset("lomfont")}>Fonte LoM</button>
-          <button className="secondary" onClick={() => applyPreset("tile8")}>8×8</button>
-          <button className="secondary" onClick={() => applyPreset("tile16")}>16×16</button>
+        {/* PRESETS de config: aplicar (dropdown) + salvar/renomear/excluir */}
+        <div className="presets">
+          <div className="presets-title">Presets de config</div>
+          <select
+            className="preset-sel"
+            value={selCfg}
+            onChange={(e) => {
+              const p = allCfgs.find((x) => x.name === e.target.value);
+              if (p) applyConfigPreset(p);
+            }}
+          >
+            <option value="">— aplicar preset —</option>
+            <optgroup label="Embutidos">
+              {BUILTIN_CONFIG_PRESETS.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+            </optgroup>
+            {customCfgs.length > 0 && (
+              <optgroup label="Meus presets">
+                {customCfgs.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+              </optgroup>
+            )}
+          </select>
+          <div className="preset-save">
+            <input
+              className="preset-name"
+              type="text"
+              placeholder="nome do preset"
+              value={cfgPresetName}
+              onChange={(e) => setCfgPresetName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") saveConfigPreset(); }}
+            />
+            <button className="secondary" onClick={saveConfigPreset}>Salvar preset</button>
+          </div>
+          {selCfg && customCfgs.some((x) => x.name === selCfg) && (
+            <div className="preset-actions">
+              <button className="secondary" onClick={() => renameConfigPreset(selCfg)}>Renomear</button>
+              <button className="secondary" onClick={() => deleteConfigPreset(selCfg)}>Excluir</button>
+            </div>
+          )}
         </div>
 
         <div className="nav">
@@ -515,7 +693,7 @@ export function App(): JSX.Element {
       </main>
 
       <aside className="inspector">
-        <h2>tile studio<span className="caret">_</span><span className="ver">v0.4</span></h2>
+        <h2>tile studio<span className="caret">_</span><span className="ver">v0.5</span></h2>
 
         {indexed && (
           <div className="palette">
@@ -554,6 +732,47 @@ export function App(): JSX.Element {
               <button className="secondary" onClick={loadPalette}>Paleta (PNG)</button>
               {palette && <button className="secondary" onClick={() => setPalette(null)}>Cinza</button>}
             </div>
+
+            {/* PRESETS de paleta: aplicar + salvar/renomear/excluir */}
+            <div className="presets">
+              <div className="presets-title">Presets de paleta</div>
+              <select
+                className="preset-sel"
+                value={selPal}
+                onChange={(e) => {
+                  const p = allPals.find((x) => x.name === e.target.value);
+                  if (p) applyPalettePreset(p);
+                }}
+              >
+                <option value="">— aplicar paleta —</option>
+                <optgroup label="Embutidas">
+                  {BUILTIN_PALETTE_PRESETS.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+                </optgroup>
+                {customPals.length > 0 && (
+                  <optgroup label="Minhas paletas">
+                    {customPals.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+                  </optgroup>
+                )}
+              </select>
+              <div className="preset-save">
+                <input
+                  className="preset-name"
+                  type="text"
+                  placeholder="nome da paleta"
+                  value={palPresetName}
+                  onChange={(e) => setPalPresetName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") savePalettePreset(); }}
+                />
+                <button className="secondary" onClick={savePalettePreset}>Salvar paleta</button>
+              </div>
+              {selPal && customPals.some((x) => x.name === selPal) && (
+                <div className="preset-actions">
+                  <button className="secondary" onClick={() => renamePalettePreset(selPal)}>Renomear</button>
+                  <button className="secondary" onClick={() => deletePalettePreset(selPal)}>Excluir</button>
+                </div>
+              )}
+            </div>
+
             <div className="hint">Clique numa celula pra escolher a cor de pintura (ela fica destacada). Clique de novo abre o color-picker daquele indice.</div>
           </div>
         )}

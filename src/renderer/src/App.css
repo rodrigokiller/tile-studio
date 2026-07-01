@@ -414,3 +414,38 @@ label.curswatch input[type="color"] {
 
 .nav { display: flex; gap: 4px; margin-top: 4px; }
 .nav button { flex: 1; }
+
+/* PRESETS (config e paleta): bloco com dropdown de aplicar + salvar/renomear/excluir */
+.presets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  padding: 8px;
+}
+.presets-title {
+  font-size: 11px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.preset-sel,
+.preset-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line-bright);
+  color: var(--text);
+  padding: 5px 6px;
+  border-radius: 0;
+  outline: none;
+  width: 100%;
+}
+.preset-sel:focus,
+.preset-name:focus { border-color: var(--accent); }
+.preset-sel optgroup { color: var(--muted); font-style: normal; }
+.preset-sel option { color: var(--text); background: var(--bg); }
+.preset-save { display: flex; flex-direction: column; gap: 5px; }
+.preset-actions { display: flex; gap: 6px; }
+.preset-actions button { flex: 1; }
