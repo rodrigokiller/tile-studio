@@ -11,26 +11,46 @@ sentido com bpp/largura/ordem certos (ex.: os mapas WM do Legend of Mana = 4bpp,
 abrir qualquer arquivo, ajustar os parametros ate a imagem aparecer, navegar pelo arquivo e
 exportar.
 
-## Estado atual (v0.1)
+## Estado atual (v0.2)
 
-- `src/tile.ts`: decoder de tiles configuravel (bpp 4/8/16, largura, tile, reverse, offset,
-  paleta) -- compartilhado com o TIM Studio.
+- `src/tile.ts`: motor de tiles estilo Tile Molester. bpp **1/2/4/8** (indexado) e **16/24**
+  (cor direta); modo **planar** (bitplanes por linha, MSB = pixel da esquerda) e **linear**
+  (empacotado, in-order ou reverse); tile de qualquer tamanho (LxA); disposicao em N colunas;
+  offset em bytes. Expoe `decodeTiles`, `readPixelIndex`, `writePixelIndex`, `tileSizeBytes`,
+  `locatePixel`.
 - `src/tim.ts`: codec TIM (compartilhado; pra futuras conversoes).
-- App Electron + React: abrir arquivo (ou arrastar), controles de bpp/largura/tile/offset,
-  navegacao pelo arquivo (setas / PageUp-Down), paleta de PNG ou tons de cinza, zoom, exportar PNG.
+- App Electron + React:
+  - abrir qualquer arquivo binario (ou arrastar);
+  - controles de bpp, modo planar/linear, tile largura/altura, colunas, linhas, offset, zoom;
+  - **canvas-em-tiles** com grade opcional (igual ao Tile Molester);
+  - **editor de pixel**: clique/arraste pinta com o indice de paleta selecionado e grava
+    de volta nos bytes;
+  - **paleta editavel** (color-picker por indice), carregar de PNG, ou rampa de cinza padrao;
+  - **Salvar** (grava no arquivo), **Salvar como**, **Exportar PNG**;
+  - presets rapidos: Fonte LoM, 8x8, 16x16;
+  - navegacao pelo arquivo por offset (setas / PageUp-Down / botoes).
 
 Rodar: `npm install` e `npm run dev`.
 
+## Exemplo: fonte do Legend of Mana
+
+Clique no preset **Fonte LoM** (1bpp **planar**, tile **16x12**, 16 colunas). A fonte aparece
+legivel: ASCII, acentos PT-BR (a e i o u com til/acento/circunflexo, c-cedilha), icones de botao
+do PSX, coracao e nota musical. Cada glifo = 24 bytes (12 linhas x 2 bytes, MSB = pixel da esquerda).
+
 ## Exemplo: mapas WM do Legend of Mana
 
-Abra o `WM1.TIM` e use: bpp **4**, largura **1280**, tile **8**, **reverse** ligado, offset **20**.
+Abra o `WM1.TIM` e use: bpp **4**, modo **linear**, tile **8x8**, offset **20**, ajuste colunas.
 
 ## Roadmap
 
-- [x] Visualizador de tiles configuravel + navegacao + export PNG
-- [x] Paleta de PNG ou tons de cinza
-- [ ] Desenhar/editar os tiles (pixel editor) e re-exportar pro jogo
-- [ ] Editor de paleta
+- [x] Motor de tiles configuravel (planar/linear, 1/2/4/8/16/24bpp) + navegacao + export PNG
+- [x] Paleta de PNG, rampa de cinza, ou editavel por color-picker
+- [x] Desenhar/editar pixel e salvar de volta no arquivo
+- [ ] Desfazer/refazer (undo/redo)
+- [ ] Codec composite (tiles montados de varios sub-tiles, ex.: 3bpp = 2bpp+1bpp)
+- [ ] Modo 2D (stride) alem do 1D
+- [ ] Selecao / copiar-colar / espelhar / girar tiles
 - [ ] Visao de VRAM / arranjos 2D extras
 - [ ] Core compartilhado (psx-core) entre TIM Studio, Tile Studio e LoM Studio
 
