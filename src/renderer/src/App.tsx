@@ -11,6 +11,9 @@ import {
   type PixelMode,
 } from "../../tile";
 
+// teto do historico de undo (descarta as entradas mais antigas ao passar)
+const MAX_UNDO = 200;
+
 // -- helpers de paleta --------------------------------------------------------
 
 async function pngToRgba(bytes: Uint8Array): Promise<{ width: number; height: number; rgba: Uint8Array }> {
@@ -329,6 +332,10 @@ export function App(): JSX.Element {
       panStart.current = null;
       if (stroke.current && stroke.current.size > 0) {
         undoStack.current.push([...stroke.current.values()]);
+        // teto do historico: descarta as entradas mais antigas
+        if (undoStack.current.length > MAX_UNDO) {
+          undoStack.current.splice(0, undoStack.current.length - MAX_UNDO);
+        }
         redoStack.current = []; // nova edicao invalida o redo
         setHistLen({ u: undoStack.current.length, r: 0 });
       }
