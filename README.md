@@ -11,7 +11,7 @@ sentido com bpp/largura/ordem certos (ex.: os mapas WM do Legend of Mana = 4bpp,
 abrir qualquer arquivo, ajustar os parametros ate a imagem aparecer, navegar pelo arquivo e
 exportar.
 
-## Estado atual (v0.4)
+## Estado atual (v0.5)
 
 - `src/tile.ts`: motor de tiles estilo Tile Molester. bpp **1/2/4/8** (indexado) e **16/24**
   (cor direta); modo **planar** (bitplanes por linha, MSB = pixel da esquerda) e **linear**
@@ -36,14 +36,21 @@ exportar.
     e um color-picker de RGB;
   - **paleta editavel** (color-picker por indice), carregar de PNG, ou rampa de cinza padrao;
   - **Salvar** (grava no arquivo), **Salvar como**, **Exportar PNG**;
-  - presets rapidos: Fonte LoM, 8x8, 16x16;
+  - **presets salvaveis** (persistidos em localStorage):
+    - de config (bpp, modo, reverse, tile LxA, colunas, offset, zoom): aplicar por dropdown,
+      salvar/renomear/excluir os customizados. Embutidos read-only: "Fonte LoM
+      (1bpp planar 16x12)", "8x8 4bpp linear", "8x8 2bpp planar", "16x16 4bpp linear",
+      "WM map (4bpp linear reverse)".
+    - de paleta: aplicar/salvar/renomear/excluir. Embutidas: "Tons de cinza (16)" e
+      "Contraste 16 cores". Aplicar um preset nunca entra na pilha de undo de pixel.
   - navegacao pelo arquivo por offset (setas / PageUp-Down / botoes).
 
 Rodar: `npm install` e `npm run dev`.
 
 ## Exemplo: fonte do Legend of Mana
 
-Clique no preset **Fonte LoM** (1bpp **planar**, tile **16x12**, 16 colunas). A fonte aparece
+Aplique o preset embutido **Fonte LoM (1bpp planar 16x12)** no dropdown de presets de config
+(1bpp **planar**, tile **16x12**, 16 colunas). A fonte aparece
 legivel: ASCII, acentos PT-BR (a e i o u com til/acento/circunflexo, c-cedilha), icones de botao
 do PSX, coracao e nota musical. Cada glifo = 24 bytes (12 linhas x 2 bytes, MSB = pixel da esquerda).
 
@@ -59,6 +66,7 @@ Abra o `WM1.TIM` e use: bpp **4**, modo **linear**, tile **8x8**, offset **20**,
 - [x] Desfazer/refazer (undo/redo) so das edicoes de pixel, com teto de 200 entradas
 - [x] Modo editar vs navegar (pan) + cor de pintura clara
 - [x] Edicao de pixel em cor direta (16bpp ABGR1555 / 24bpp RGB)
+- [x] Presets salvaveis de config e de paleta (embutidos + customizados persistidos)
 - [ ] Codec composite (tiles montados de varios sub-tiles, ex.: 3bpp = 2bpp+1bpp)
 - [ ] Modo 2D (stride) alem do 1D
 - [ ] Selecao / copiar-colar / espelhar / girar tiles
