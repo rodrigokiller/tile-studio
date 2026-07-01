@@ -249,7 +249,7 @@ canvas {
 }
 .sw { width: 12px; height: 12px; outline: 1px solid rgba(0, 0, 0, 0.35); }
 
-/* celulas da paleta editavel: quadrado colorido com color-picker escondido dentro */
+/* celulas da paleta: clique-esquerdo seleciona a cor de pintura, shift/direito edita */
 .swatches { padding: 2px; }
 .palcell {
   position: relative;
@@ -265,15 +265,15 @@ canvas {
   box-shadow: 0 0 0 2px var(--bg), 0 0 8px var(--accent);
   z-index: 1;
 }
-.palcell input[type="color"] {
+/* color-picker unico compartilhado, escondido; disparado por openPicker() */
+.hidden-color {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  width: 0;
+  height: 0;
   opacity: 0;
-  border: none;
+  border: 0;
   padding: 0;
-  cursor: pointer;
+  pointer-events: none;
 }
 
 /* toggle de ferramenta: editar vs navegar (pan) */
@@ -325,6 +325,15 @@ canvas {
   box-shadow: 0 0 0 1px var(--accent);
   display: inline-block;
 }
+/* quando a swatch e um botao (paleta indexada): clicar abre o editor da cor atual */
+button.curswatch {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  cursor: pointer;
+  border-radius: 0;
+}
+button.curswatch:hover { box-shadow: 0 0 0 1px var(--accent), 0 0 8px var(--accent); }
 /* quando a swatch e um color-picker (cor direta), esconde o input dentro dela */
 label.curswatch { cursor: pointer; }
 label.curswatch input[type="color"] {

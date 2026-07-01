@@ -379,6 +379,23 @@ export function App(): JSX.Element {
     [palette, ncolors],
   );
 
+  // color-picker unico e compartilhado; abrimos ele programaticamente pro indice
+  // que o usuario quer EDITAR (clique-direito / shift-clique numa celula, ou clique
+  // no swatch grande). O clique-esquerdo simples so SELECIONA o indice de pintura.
+  const colorInputRef = useRef<HTMLInputElement>(null);
+  const editingIdx = useRef(0);
+  const openPicker = useCallback(
+    (i: number) => {
+      if (!effPal) return;
+      editingIdx.current = i;
+      const inp = colorInputRef.current;
+      if (!inp) return;
+      inp.value = rgbaToHex(effPal, i); // parte da cor atual daquele indice
+      inp.click(); // abre o dialogo nativo de cor
+    },
+    [effPal],
+  );
+
   const loadPalette = useCallback(async () => {
     const png = await window.api.openPng();
     if (!png) return;
@@ -693,15 +710,22 @@ export function App(): JSX.Element {
       </main>
 
       <aside className="inspector">
-        <h2>tile studio<span className="caret">_</span><span className="ver">v0.5</span></h2>
+        <h2>tile studio<span className="caret">_</span><span className="ver">v0.6</span></h2>
 
         {indexed && (
           <div className="palette">
-            {/* COR ATUAL de pintura: swatch grande + rotulo */}
+            {/* COR ATUAL de pintura: swatch grande + rotulo.
+                clicar no quadrado abre o editor de cor do indice selecionado. */}
             <div className="curcolor">
               <div className="curlabel">Cor de pintura</div>
               <div className="curbox">
-                <span className="curswatch" style={{ background: rgbaToHex(effPal!, palIndex) }} />
+                <button
+                  type="button"
+                  className="curswatch"
+                  style={{ background: rgbaToHex(effPal!, palIndex) }}
+                  title="clique pra editar a cor de pintura atual"
+                  onClick={() => openPicker(palIndex)}
+                />
                 <div className="curmeta">
                   <b>indice {palIndex}</b>
                   <span>{rgbaToHex(effPal!, palIndex)}</span>
@@ -712,22 +736,30 @@ export function App(): JSX.Element {
             <div className="kv"><span>Paleta</span><b>{palette ? "custom" : "cinza"} ({ncolors})</b></div>
             <div className="swatches">
               {Array.from({ length: ncolors }, (_, i) => (
-                <label
+                <div
                   key={i}
                   className={"palcell" + (i === palIndex ? " on" : "")}
-                  title={`indice ${i} -- clique pra pintar com esta cor`}
-                  onClick={() => setPalIndex(i)}
+                  title={`indice ${i} -- clique: pintar | shift/direito: editar cor`}
                   style={{ background: rgbaToHex(effPal!, i) }}
-                >
-                  <input
-                    type="color"
-                    value={rgbaToHex(effPal!, i)}
-                    onChange={(e) => setPalColor(i, e.target.value)}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </label>
+                  onClick={(e) => {
+                    // shift+clique edita; clique simples so seleciona a cor de pintura
+                    if (e.shiftKey) openPicker(i);
+                    else setPalIndex(i);
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault(); // sem menu de contexto nativo
+                    openPicker(i);
+                  }}
+                />
               ))}
             </div>
+            {/* color-picker unico, escondido, disparado por openPicker() */}
+            <input
+              ref={colorInputRef}
+              type="color"
+              className="hidden-color"
+              onChange={(e) => setPalColor(editingIdx.current, e.target.value)}
+            />
             <div className="btnrow">
               <button className="secondary" onClick={loadPalette}>Paleta (PNG)</button>
               {palette && <button className="secondary" onClick={() => setPalette(null)}>Cinza</button>}
@@ -773,7 +805,7 @@ export function App(): JSX.Element {
               )}
             </div>
 
-            <div className="hint">Clique numa celula pra escolher a cor de pintura (ela fica destacada). Clique de novo abre o color-picker daquele indice.</div>
+            <div className="hint">Clique numa celula = escolhe a cor de pintura (fica destacada). Shift+clique ou clique-direito = edita a cor daquele indice. Clicar no quadrado grande "Cor de pintura" edita o indice selecionado.</div>
           </div>
         )}
 
