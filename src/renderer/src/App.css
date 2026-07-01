@@ -317,12 +317,36 @@ canvas {
   border: 1px solid var(--line-bright);
 }
 .curswatch {
+  position: relative;
   width: 40px;
   height: 40px;
   flex: 0 0 40px;
   outline: 1px solid rgba(0, 0, 0, 0.5);
   box-shadow: 0 0 0 1px var(--accent);
+  display: inline-block;
 }
+/* quando a swatch e um color-picker (cor direta), esconde o input dentro dela */
+label.curswatch { cursor: pointer; }
+label.curswatch input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.chk-stp {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.chk-stp input[type="checkbox"] { accent-color: var(--accent); }
 .curmeta { display: flex; flex-direction: column; gap: 2px; }
 .curmeta b { color: var(--accent); font-size: 13px; letter-spacing: 1px; }
 .curmeta span { color: var(--muted); font-size: 11px; }

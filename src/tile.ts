@@ -168,6 +168,47 @@ function directToRGBA(bpp: 16 | 24, c: number, out: Uint8Array, o: number): void
 }
 
 /**
+ * Empacota uma cor RGB (0-255) no valor cru de cor direta pra gravar com writePixelIndex.
+ * 16bpp = ABGR1555 do PSX (5-5-5 + bit STP no bit15); 24bpp = 0xBBGGRR.
+ * @param stp bit STP/mascara do 16bpp (0 ou 1). Ignorado no 24bpp.
+ */
+export function rgbToDirect(
+  bpp: 16 | 24,
+  r: number,
+  g: number,
+  b: number,
+  stp = 0,
+): number {
+  if (bpp === 24) {
+    return (r & 0xff) | ((g & 0xff) << 8) | ((b & 0xff) << 16);
+  }
+  // 5 bits por canal (arredonda de 8->5)
+  const r5 = (r >> 3) & 31;
+  const g5 = (g >> 3) & 31;
+  const b5 = (b >> 3) & 31;
+  return r5 | (g5 << 5) | (b5 << 10) | ((stp & 1) << 15);
+}
+
+/** Extrai o RGB (0-255) de um valor de cor direta. Inverso de rgbToDirect. */
+export function directToRgb(
+  bpp: 16 | 24,
+  c: number,
+): { r: number; g: number; b: number; stp: number } {
+  if (bpp === 24) {
+    return { r: c & 0xff, g: (c >> 8) & 0xff, b: (c >> 16) & 0xff, stp: 0 };
+  }
+  const r5 = c & 31;
+  const g5 = (c >> 5) & 31;
+  const b5 = (c >> 10) & 31;
+  return {
+    r: (r5 << 3) | (r5 >> 2),
+    g: (g5 << 3) | (g5 >> 2),
+    b: (b5 << 3) | (b5 >> 2),
+    stp: (c >> 15) & 1,
+  };
+}
+
+/**
  * Decodifica um grid de tiles num buffer RGBA. Dispoe `cols` tiles por linha.
  */
 export function decodeTiles(

@@ -6,6 +6,7 @@ import {
   writePixelIndex,
   readPixelIndex,
   locatePixel,
+  rgbToDirect,
   type TileConfig,
   type PixelMode,
 } from "../../tile";
@@ -69,7 +70,9 @@ export function App(): JSX.Element {
   const [zoom, setZoom] = useState(4);
 
   const [palette, setPalette] = useState<Uint8Array | null>(null);
-  const [palIndex, setPalIndex] = useState(1); // cor "de frente" (a cor que pinta)
+  const [palIndex, setPalIndex] = useState(1); // cor "de frente" (indice que pinta, bpp<=8)
+  const [dirColor, setDirColor] = useState("#34e2a0"); // cor RGB de pintura (16/24bpp)
+  const [dirStp, setDirStp] = useState(false); // bit STP/mascara pra 16bpp
   const [showGrid, setShowGrid] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -245,19 +248,28 @@ export function App(): JSX.Element {
     };
   }, []);
 
+  // valor que a pintura grava: indice de paleta (bpp<=8) ou cor direta empacotada (16/24)
+  const paintValue = useMemo(() => {
+    if (indexed) return palIndex;
+    const r = parseInt(dirColor.slice(1, 3), 16);
+    const g = parseInt(dirColor.slice(3, 5), 16);
+    const b = parseInt(dirColor.slice(5, 7), 16);
+    return rgbToDirect(bpp as 16 | 24, r, g, b, dirStp ? 1 : 0);
+  }, [indexed, palIndex, dirColor, dirStp, bpp]);
+
   // -- pintura (agrupa mudancas do stroke atual pra 1 entrada de undo) ---------
   const stroke = useRef<Map<number, ByteChange> | null>(null);
 
   const paintAt = useCallback(
     (clientX: number, clientY: number) => {
       const cv = canvasRef.current;
-      if (!cv || !raw || !indexed || !stroke.current) return;
+      if (!cv || !raw || !stroke.current) return;
       const rect = cv.getBoundingClientRect();
       const x = Math.floor(((clientX - rect.left) / rect.width) * cv.width);
       const y = Math.floor(((clientY - rect.top) / rect.height) * cv.height);
       if (x < 0 || y < 0 || x >= cv.width || y >= cv.height) return;
       const loc = locatePixel(cfg, x, y);
-      const value = palIndex;
+      const value = paintValue;
 
       // snapshot dos bytes antes: le, escreve, e compara pra registrar so o que mudou
       const before = new Uint8Array(raw);
@@ -276,7 +288,7 @@ export function App(): JSX.Element {
       setRaw(new Uint8Array(raw)); // dispara re-render
       setDirty(true);
     },
-    [raw, cfg, palIndex, indexed],
+    [raw, cfg, paintValue],
   );
 
   const dragging = useRef(false);
@@ -292,9 +304,8 @@ export function App(): JSX.Element {
       e.preventDefault();
       return;
     }
-    if (!indexed) return; // edicao de pixel so pra bpp indexado por enquanto
     dragging.current = true;
-    stroke.current = new Map(); // comeca um novo stroke
+    stroke.current = new Map(); // comeca um novo stroke (indexado ou cor direta)
     paintAt(e.clientX, e.clientY);
   };
 
@@ -400,7 +411,7 @@ export function App(): JSX.Element {
     else if (p === "tile16") { setTileW(16); setTileH(16); }
   };
 
-  const cursor = panning ? (dragging.current ? "grabbing" : "grab") : indexed ? "crosshair" : "default";
+  const cursor = panning ? (dragging.current ? "grabbing" : "grab") : "crosshair";
 
   return (
     <div className="app" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
@@ -497,7 +508,7 @@ export function App(): JSX.Element {
       </main>
 
       <aside className="inspector">
-        <h2>tile studio<span className="caret">_</span><span className="ver">v0.3</span></h2>
+        <h2>tile studio<span className="caret">_</span><span className="ver">v0.4</span></h2>
 
         {indexed && (
           <div className="palette">
@@ -537,6 +548,30 @@ export function App(): JSX.Element {
               {palette && <button className="secondary" onClick={() => setPalette(null)}>Cinza</button>}
             </div>
             <div className="hint">Clique numa celula pra escolher a cor de pintura (ela fica destacada). Clique de novo abre o color-picker daquele indice.</div>
+          </div>
+        )}
+
+        {!indexed && (
+          <div className="palette">
+            {/* COR DE PINTURA em cor direta (16/24bpp): color-picker de RGB */}
+            <div className="curcolor">
+              <div className="curlabel">Cor de pintura ({bpp}bpp {bpp === 16 ? "ABGR1555" : "RGB"})</div>
+              <div className="curbox">
+                <label className="curswatch" style={{ background: dirColor }} title="clique pra escolher a cor RGB">
+                  <input type="color" value={dirColor} onChange={(e) => setDirColor(e.target.value)} />
+                </label>
+                <div className="curmeta">
+                  <b>{dirColor.toUpperCase()}</b>
+                  <span>{bpp === 16 ? "snap 5-5-5" : "RGB 8-8-8"}</span>
+                </div>
+              </div>
+            </div>
+            {bpp === 16 && (
+              <label className="chk chk-stp">
+                <input type="checkbox" checked={dirStp} onChange={(e) => setDirStp(e.target.checked)} /> bit STP (mascara)
+              </label>
+            )}
+            <div className="hint">Cor direta: clique no quadrado pra escolher a cor RGB de pintura. Clique-e-arraste no canvas pinta essa cor nos bytes.</div>
           </div>
         )}
 
