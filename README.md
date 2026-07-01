@@ -11,13 +11,13 @@ sentido com bpp/largura/ordem certos (ex.: os mapas WM do Legend of Mana = 4bpp,
 abrir qualquer arquivo, ajustar os parametros ate a imagem aparecer, navegar pelo arquivo e
 exportar.
 
-## Estado atual (v0.3)
+## Estado atual (v0.4)
 
 - `src/tile.ts`: motor de tiles estilo Tile Molester. bpp **1/2/4/8** (indexado) e **16/24**
   (cor direta); modo **planar** (bitplanes por linha, MSB = pixel da esquerda) e **linear**
   (empacotado, in-order ou reverse); tile de qualquer tamanho (LxA); disposicao em N colunas;
   offset em bytes. Expoe `decodeTiles`, `readPixelIndex`, `writePixelIndex`, `tileSizeBytes`,
-  `locatePixel`.
+  `locatePixel`, `rgbToDirect`, `directToRgb`.
 - `src/tim.ts`: codec TIM (compartilhado; pra futuras conversoes).
 - App Electron + React:
   - abrir qualquer arquivo binario (ou arrastar);
@@ -25,12 +25,15 @@ exportar.
   - **canvas-em-tiles** com grade opcional (igual ao Tile Molester);
   - **modo editar vs navegar (pan)**: toggle claro; no modo navegar (ou segurando Espaco)
     arrastar rola a imagem sem pintar;
-  - **editor de pixel**: no modo editar, clique/arraste pinta com o indice de paleta
-    selecionado e grava de volta nos bytes;
+  - **editor de pixel** pra qualquer bpp: no modo editar, clique/arraste pinta e grava de
+    volta nos bytes. Em bpp indexado (1/2/4/8) pinta o indice de paleta; em cor direta
+    (16/24bpp) pinta uma cor RGB escolhida por color-picker (16bpp com bit STP opcional);
   - **desfazer/refazer** (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y): a pilha guarda SO edicoes de
-    pixel (mudancas de bytes); o estado de visualizacao nunca entra na pilha;
-  - **cor de pintura** clara: swatch grande no inspector com indice e hex; clicar numa
-    celula da paleta seleciona a cor de pintura (destaque forte);
+    pixel (mudancas de bytes); o estado de visualizacao nunca entra na pilha; historico
+    capado em 200 entradas (descarta as mais antigas);
+  - **cor de pintura** clara: swatch grande no inspector com indice/hex; em bpp indexado
+    clicar numa celula da paleta seleciona a cor (destaque forte); em cor direta o swatch
+    e um color-picker de RGB;
   - **paleta editavel** (color-picker por indice), carregar de PNG, ou rampa de cinza padrao;
   - **Salvar** (grava no arquivo), **Salvar como**, **Exportar PNG**;
   - presets rapidos: Fonte LoM, 8x8, 16x16;
@@ -53,8 +56,9 @@ Abra o `WM1.TIM` e use: bpp **4**, modo **linear**, tile **8x8**, offset **20**,
 - [x] Motor de tiles configuravel (planar/linear, 1/2/4/8/16/24bpp) + navegacao + export PNG
 - [x] Paleta de PNG, rampa de cinza, ou editavel por color-picker
 - [x] Desenhar/editar pixel e salvar de volta no arquivo
-- [x] Desfazer/refazer (undo/redo) so das edicoes de pixel
+- [x] Desfazer/refazer (undo/redo) so das edicoes de pixel, com teto de 200 entradas
 - [x] Modo editar vs navegar (pan) + cor de pintura clara
+- [x] Edicao de pixel em cor direta (16bpp ABGR1555 / 24bpp RGB)
 - [ ] Codec composite (tiles montados de varios sub-tiles, ex.: 3bpp = 2bpp+1bpp)
 - [ ] Modo 2D (stride) alem do 1D
 - [ ] Selecao / copiar-colar / espelhar / girar tiles
