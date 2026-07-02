@@ -6,6 +6,13 @@ import { spawn } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// guardado pra popar cada submenu como um Menu NOVO (popar um submenu que ja pertence ao
+// applicationMenu nao funciona de forma confiavel no Electron)
+let menuTemplate: MenuItemConstructorOptions[] = [];
+// estado dinamico do menu: o item "Exportar paleta (.ACT)" so habilita nos bpp indexados.
+// e uma var de modulo (nao getMenuItemById) pra o template refletir e o popup ler certo.
+let exportPaletteEnabled = false;
+
 // O Tile Studio abre 1 arquivo por janela; suporta multiplas janelas.
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -101,9 +108,8 @@ function buildMenu(): void {
         { role: "selectAll", label: "Selecionar tudo" },
         { type: "separator" },
         {
-          id: "exportPalette",
           label: "Exportar paleta (.ACT)...",
-          enabled: false, // so habilita quando o renderer estiver num bpp indexado com paleta
+          enabled: exportPaletteEnabled, // so habilita nos bpp indexados (renderer atualiza)
           click: () =>
             (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])?.webContents.send("menu:exportPalette"),
         },
@@ -146,6 +152,7 @@ function buildMenu(): void {
       ],
     },
   ];
+  menuTemplate = template; // guarda pra os botoes da barra poparem cada submenu como menu novo
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
@@ -156,12 +163,16 @@ ipcMain.handle("menu:popup", (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   if (m && win) m.popup({ window: win, x: 8, y: 34 });
 });
-// abre o submenu de UM item do topo (0=Arquivo,1=Editar,...) na posicao x do botao (barra de titulo)
+// abre o submenu de UM item do topo (0=Arquivo,1=Editar,...) na posicao x do botao (barra de titulo).
+// constroi um Menu NOVO a partir do template do submenu -- popar o submenu que ja pertence ao
+// applicationMenu nao funciona de forma confiavel no Electron.
 ipcMain.handle("menu:popupItem", (e, arg: { index: number; x: number }) => {
-  const m = Menu.getApplicationMenu();
   const win = BrowserWindow.fromWebContents(e.sender);
-  const item = m?.items?.[arg.index];
-  if (item?.submenu && win) item.submenu.popup({ window: win, x: Math.round(arg.x), y: 34 });
+  const top = menuTemplate[arg.index];
+  if (win && top && Array.isArray(top.submenu)) {
+    const sub = Menu.buildFromTemplate(top.submenu as MenuItemConstructorOptions[]);
+    sub.popup({ window: win, x: Math.round(arg.x), y: 34 });
+  }
 });
 
 // abre o dialogo nativo "Abrir com..." do Windows (escolher o programa); fallback pro padrao
@@ -204,10 +215,12 @@ ipcMain.handle("dialog:saveAct", async (_e, def: string) => {
   });
   return r.canceled ? null : r.filePath;
 });
-// habilita/desabilita o item "Exportar paleta" no menu Editar (o renderer chama conforme o bpp)
+// habilita/desabilita o item "Exportar paleta" no menu Editar (o renderer chama conforme o bpp).
+// atualiza a var de modulo e reconstroi o menu, pra o template (que o popup le) refletir.
 ipcMain.handle("menu:setPaletteEnabled", (_e, on: boolean) => {
-  const item = Menu.getApplicationMenu()?.getMenuItemById("exportPalette");
-  if (item) item.enabled = on;
+  if (exportPaletteEnabled === on) return;
+  exportPaletteEnabled = on;
+  buildMenu();
 });
 ipcMain.handle("fs:readFile", (_e, p: string) => readFileSync(p));
 ipcMain.handle("fs:writeFile", (_e, p: string, data: Uint8Array) => {
