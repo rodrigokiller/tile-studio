@@ -660,11 +660,19 @@ export function App(): JSX.Element {
 
   return (
     <div className="app" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
-      {/* barra de titulo custom (arrasta a janela); botao ☰ abre o menu do app */}
+      {/* barra de titulo custom (arrasta a janela); barra de menu com botoes por item.
+          os indices batem com o template do menu: Arquivo=0, Editar=1, Exibir=2, Janela=3, Ajuda=4 */}
       <div className="titlebar">
         <div className="tb-nav">
-          <button className="tb-btn tb-menu" onClick={() => window.api.popupMenu()} title="menu (Arquivo, Editar...)">☰</button>
+          {["Arquivo", "Editar", "Exibir", "Janela", "Ajuda"].map((label, i) => (
+            <button
+              key={label}
+              className="tb-menub"
+              onClick={(e) => window.api.popupMenuItem(i, e.currentTarget.getBoundingClientRect().left)}
+            >{label}</button>
+          ))}
         </div>
+        <div className="tb-navsep" />
         <div className="tb-title">
           <span className="tb-app">tile studio</span>
           {fileName && <span className="tb-sep">·</span>}

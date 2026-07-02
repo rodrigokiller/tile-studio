@@ -73,7 +73,21 @@ body::after {
   z-index: 5;
   user-select: none;
 }
-.tb-nav { -webkit-app-region: no-drag; display: flex; gap: 4px; }
+.tb-nav { -webkit-app-region: no-drag; display: flex; gap: 4px; align-items: center; }
+/* botoes do menu (Arquivo, Editar...) na barra de titulo -- estilo barra de menu de app */
+.tb-menub {
+  -webkit-app-region: no-drag;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  padding: 4px 9px;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.tb-menub:hover { color: var(--accent); background: rgba(52, 226, 160, 0.1); }
+.tb-navsep { width: 1px; height: 16px; background: var(--line-bright); margin: 0 5px; }
 .tb-btn {
   -webkit-app-region: no-drag;
   font-family: var(--mono);

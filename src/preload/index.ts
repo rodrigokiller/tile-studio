@@ -18,8 +18,10 @@ const api = {
     ipcRenderer.on("menu:openFile", handler);
     return () => ipcRenderer.removeListener("menu:openFile", handler);
   },
-  // barra de titulo custom: o botao ☰ abre o menu do app como popup
+  // barra de titulo custom: abre o menu do app como popup, ou o submenu de um item do topo
   popupMenu: (): Promise<void> => ipcRenderer.invoke("menu:popup"),
+  popupMenuItem: (index: number, x: number): Promise<void> =>
+    ipcRenderer.invoke("menu:popupItem", { index, x }),
   // "Abrir com..." (dialogo nativo do Windows) do arquivo atual
   openWith: (p: string): Promise<boolean | string> => ipcRenderer.invoke("shell:openWith", p),
   // menu Editar > Preferencias (Ctrl+,) manda o app abrir a janela de preferencias

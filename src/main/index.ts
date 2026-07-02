@@ -142,11 +142,18 @@ function buildMenu(): void {
 }
 
 // abre o menu do app (Arquivo/Editar/...) como popup -- com a barra de titulo custom,
-// o menu nativo do Windows fica escondido; o botao "☰" na barra chama isto.
+// o menu nativo do Windows fica escondido; os botoes da barra chamam isto.
 ipcMain.handle("menu:popup", (e) => {
   const m = Menu.getApplicationMenu();
   const win = BrowserWindow.fromWebContents(e.sender);
   if (m && win) m.popup({ window: win, x: 8, y: 34 });
+});
+// abre o submenu de UM item do topo (0=Arquivo,1=Editar,...) na posicao x do botao (barra de titulo)
+ipcMain.handle("menu:popupItem", (e, arg: { index: number; x: number }) => {
+  const m = Menu.getApplicationMenu();
+  const win = BrowserWindow.fromWebContents(e.sender);
+  const item = m?.items?.[arg.index];
+  if (item?.submenu && win) item.submenu.popup({ window: win, x: Math.round(arg.x), y: 34 });
 });
 
 // abre o dialogo nativo "Abrir com..." do Windows (escolher o programa); fallback pro padrao

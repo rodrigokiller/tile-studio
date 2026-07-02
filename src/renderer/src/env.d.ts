@@ -13,6 +13,7 @@ interface Window {
     getLastFile: () => Promise<string>;
     onOpenFile: (cb: (path: string) => void) => () => void;
     popupMenu: () => Promise<void>;
+    popupMenuItem: (index: number, x: number) => Promise<void>;
     openWith: (p: string) => Promise<boolean | string>;
     onOpenPreferences: (cb: () => void) => () => void;
   };
