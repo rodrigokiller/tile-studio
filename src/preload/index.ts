@@ -18,6 +18,16 @@ const api = {
     ipcRenderer.on("menu:openFile", handler);
     return () => ipcRenderer.removeListener("menu:openFile", handler);
   },
+  // barra de titulo custom: o botao ☰ abre o menu do app como popup
+  popupMenu: (): Promise<void> => ipcRenderer.invoke("menu:popup"),
+  // "Abrir com..." (dialogo nativo do Windows) do arquivo atual
+  openWith: (p: string): Promise<boolean | string> => ipcRenderer.invoke("shell:openWith", p),
+  // menu Editar > Preferencias (Ctrl+,) manda o app abrir a janela de preferencias
+  onOpenPreferences: (cb: () => void): (() => void) => {
+    const handler = (): void => cb();
+    ipcRenderer.on("menu:preferences", handler);
+    return () => ipcRenderer.removeListener("menu:preferences", handler);
+  },
 };
 
 contextBridge.exposeInMainWorld("api", api);

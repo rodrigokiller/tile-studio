@@ -47,10 +47,134 @@ body::after {
 }
 
 .app {
-  display: grid;
-  grid-template-columns: 250px 1fr 250px;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
 }
+.appbody {
+  display: grid;
+  grid-template-columns: 250px 1fr 250px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* barra de titulo custom (frameless, estilo VS Code): arrasta a janela + botao de menu.
+   Os botoes min/max/fechar do sistema ficam no titleBarOverlay do Windows (canto direito). */
+.titlebar {
+  -webkit-app-region: drag;
+  flex: 0 0 34px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  background: var(--panel2);
+  border-bottom: 1px solid var(--line);
+  position: relative;
+  z-index: 5;
+  user-select: none;
+}
+.tb-nav { -webkit-app-region: no-drag; display: flex; gap: 4px; }
+.tb-btn {
+  -webkit-app-region: no-drag;
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1;
+  width: 26px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line-bright);
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease;
+}
+.tb-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.tb-btn:disabled { opacity: 0.3; cursor: default; }
+.tb-title {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+.tb-app { color: var(--accent); letter-spacing: 1px; text-transform: uppercase; }
+.tb-sep { color: var(--line-bright); }
+.tb-ctx { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* janela de Preferencias (modal centralizado): Esc / clique-fora fecha */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 7, 9, 0.6);
+}
+.prefswin {
+  width: 460px;
+  max-width: 92vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line-bright);
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.6);
+}
+.prefswin-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel2);
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.prefswin-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.prefswin-close:hover { color: var(--accent); }
+.prefswin-body { padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.prefsec { display: flex; flex-direction: column; gap: 8px; }
+.prefsec-title {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+}
+.prefswin-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+.preflabel {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  line-height: 1.4;
+}
+.preflabel input { accent-color: var(--accent); margin-top: 2px; flex: 0 0 auto; }
+.preflabel small { display: block; color: var(--muted); font-size: 10px; margin-top: 3px; }
 
 .sidebar, .inspector {
   background: var(--panel);

@@ -7,6 +7,7 @@ import {
   readPixelIndex,
   locatePixel,
   rgbToDirect,
+  directToRgb,
   type TileConfig,
   type PixelMode,
 } from "../../tile";
@@ -89,8 +90,17 @@ export function App(): JSX.Element {
   const [showGrid, setShowGrid] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // preferencias persistidas (localStorage)
+  const [showPrefs, setShowPrefs] = useState(false);
+  const [reopenLast, setReopenLast] = useState(
+    () => localStorage.getItem("tilestudio:reopenLast") !== "0", // default: liga
+  );
+  const [initialTool, setInitialTool] = useState<"edit" | "pan">(
+    () => (localStorage.getItem("tilestudio:initialTool") === "pan" ? "pan" : "edit"),
+  );
+
   // ferramenta ativa: editar (pinta) ou navegar (pan). Espaco/Ctrl = pan temporario.
-  const [tool, setTool] = useState<"edit" | "pan">("edit");
+  const [tool, setTool] = useState<"edit" | "pan">(initialTool);
   const [tempPan, setTempPan] = useState(false);
 
   // presets: customizados (persistidos) + selecao atual nos dropdowns
@@ -170,8 +180,20 @@ export function App(): JSX.Element {
   // menu (Abrir arquivo / Abrir recente) manda o caminho pra carregar aqui
   useEffect(() => window.api.onOpenFile((p) => open(p)), [open]);
 
-  // ao iniciar: reabre o ultimo arquivo automaticamente (se ainda existir)
+  // menu Editar > Preferencias (Ctrl+,) abre a janela de preferencias
+  useEffect(() => window.api.onOpenPreferences(() => setShowPrefs(true)), []);
+
+  // Esc fecha a janela de preferencias
   useEffect(() => {
+    if (!showPrefs) return;
+    const onKey = (e: KeyboardEvent): void => { if (e.key === "Escape") setShowPrefs(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showPrefs]);
+
+  // ao iniciar: reabre o ultimo arquivo automaticamente (se a preferencia estiver ligada e ele existir)
+  useEffect(() => {
+    if (!reopenLast) return;
     (async () => {
       const last = await window.api.getLastFile();
       if (last) open(last);
@@ -334,10 +356,41 @@ export function App(): JSX.Element {
     [raw, cfg, paintValue],
   );
 
+  // conta-gotas (Alt+clique): pica a cor do pixel como cor de pintura. NAO entra no undo
+  // (nao altera bytes). Indexado -> seleciona o indice; direto (16/24) -> seta o RGB.
+  const pickAt = useCallback(
+    (clientX: number, clientY: number) => {
+      const cv = canvasRef.current;
+      if (!cv || !raw) return;
+      const rect = cv.getBoundingClientRect();
+      const x = Math.floor(((clientX - rect.left) / rect.width) * cv.width);
+      const y = Math.floor(((clientY - rect.top) / rect.height) * cv.height);
+      if (x < 0 || y < 0 || x >= cv.width || y >= cv.height) return;
+      const loc = locatePixel(cfg, x, y);
+      const val = readPixelIndex(raw, cfg, loc.tileBase, loc.px, loc.py);
+      if (indexed) {
+        setPalIndex(val);
+        setMsg(`conta-gotas: indice ${val}`);
+      } else {
+        const c = directToRgb(bpp as 16 | 24, val);
+        setDirColor(`#${hex2(c.r)}${hex2(c.g)}${hex2(c.b)}`);
+        if (bpp === 16) setDirStp(!!c.stp);
+        setMsg(`conta-gotas: #${hex2(c.r)}${hex2(c.g)}${hex2(c.b)}`);
+      }
+    },
+    [raw, cfg, indexed, bpp],
+  );
+
   const dragging = useRef(false);
   const panStart = useRef<{ x: number; y: number; sl: number; st: number } | null>(null);
 
   const onCanvasDown = (e: React.MouseEvent) => {
+    // Alt+clique = conta-gotas (pica a cor), sem pintar nem entrar no pan
+    if (e.altKey) {
+      e.preventDefault();
+      pickAt(e.clientX, e.clientY);
+      return;
+    }
     if (panning) {
       // inicia pan: guarda posicao inicial e scroll atual do viewer
       const v = viewerRef.current;
@@ -603,8 +656,74 @@ export function App(): JSX.Element {
 
   const cursor = panning ? (dragging.current ? "grabbing" : "grab") : "crosshair";
 
+  const fileName = path ? path.split(/[\\/]/).pop() : null;
+
   return (
     <div className="app" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+      {/* barra de titulo custom (arrasta a janela); botao ☰ abre o menu do app */}
+      <div className="titlebar">
+        <div className="tb-nav">
+          <button className="tb-btn tb-menu" onClick={() => window.api.popupMenu()} title="menu (Arquivo, Editar...)">☰</button>
+        </div>
+        <div className="tb-title">
+          <span className="tb-app">tile studio</span>
+          {fileName && <span className="tb-sep">·</span>}
+          {fileName && <span className="tb-ctx" title={path ?? ""}>{fileName}{dirty ? " *" : ""}</span>}
+        </div>
+      </div>
+
+      {showPrefs && (
+        <div className="modal-backdrop" onClick={() => setShowPrefs(false)}>
+          <div className="prefswin" onClick={(e) => e.stopPropagation()}>
+            <div className="prefswin-head">
+              <span>Preferencias</span>
+              <button className="prefswin-close" onClick={() => setShowPrefs(false)} title="fechar (Esc)">×</button>
+            </div>
+            <div className="prefswin-body">
+              <div className="prefsec">
+                <div className="prefsec-title">Inicializacao</div>
+                <label className="preflabel">
+                  <input
+                    type="checkbox"
+                    checked={reopenLast}
+                    onChange={(e) => {
+                      setReopenLast(e.target.checked);
+                      localStorage.setItem("tilestudio:reopenLast", e.target.checked ? "1" : "0");
+                    }}
+                  />
+                  <span>
+                    Reabrir o ultimo arquivo ao iniciar
+                    <small>abre automaticamente o ultimo arquivo aberto (se ainda existir)</small>
+                  </span>
+                </label>
+              </div>
+              <div className="prefsec">
+                <div className="prefsec-title">Ferramenta</div>
+                <label className="preflabel">
+                  <input
+                    type="checkbox"
+                    checked={initialTool === "pan"}
+                    onChange={(e) => {
+                      const t = e.target.checked ? "pan" : "edit";
+                      setInitialTool(t);
+                      localStorage.setItem("tilestudio:initialTool", t);
+                    }}
+                  />
+                  <span>
+                    Iniciar no modo Navegar (pan)
+                    <small>por padrao o app abre no modo Editar; ligue pra abrir no Navegar</small>
+                  </span>
+                </label>
+              </div>
+            </div>
+            <div className="prefswin-foot">
+              <button className="primary" onClick={() => setShowPrefs(false)}>Fechar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="appbody">
       <aside className="sidebar">
         <button className="primary" onClick={() => open()}>Abrir arquivo</button>
         {path && <div className="folder" title={path}>{path}{dirty ? " *" : ""}</div>}
@@ -732,7 +851,7 @@ export function App(): JSX.Element {
       </main>
 
       <aside className="inspector">
-        <h2>tile studio<span className="caret">_</span><span className="ver">v0.6</span></h2>
+        <h2>tile studio<span className="caret">_</span><span className="ver">v0.7</span></h2>
 
         {indexed && (
           <div className="palette">
@@ -868,9 +987,10 @@ export function App(): JSX.Element {
         )}
         <p className="hint">
           Clone do Tile Molester. Ctrl+Z desfaz edicoes de pixel (nao mexe em bpp/zoom/offset).
-          Segure Espaco pra pan temporario. Fonte LoM = 1bpp planar, tile 16×12.
+          Segure Espaco pra pan temporario. Alt+clique = conta-gotas. Fonte LoM = 1bpp planar, tile 16×12.
         </p>
       </aside>
+      </div>
     </div>
   );
 }

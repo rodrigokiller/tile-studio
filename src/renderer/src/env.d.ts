@@ -12,5 +12,8 @@ interface Window {
     setLastFile: (p: string) => Promise<void>;
     getLastFile: () => Promise<string>;
     onOpenFile: (cb: (path: string) => void) => () => void;
+    popupMenu: () => Promise<void>;
+    openWith: (p: string) => Promise<boolean | string>;
+    onOpenPreferences: (cb: () => void) => () => void;
   };
 }

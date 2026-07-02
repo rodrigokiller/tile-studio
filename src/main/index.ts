@@ -1,7 +1,8 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, type MenuItemConstructorOptions } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -14,6 +15,10 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     backgroundColor: "#0b0e10",
     title: "Tile Studio",
+    // barra de titulo custom (estilo VS Code): escondemos a nativa e desenhamos a nossa no
+    // renderer (com o botao de menu ☰), deixando o overlay do Windows com min/max/fechar.
+    titleBarStyle: "hidden",
+    titleBarOverlay: { color: "#0c0f12", symbolColor: "#8aa39b", height: 34 },
     webPreferences: {
       preload: join(__dirname, "../preload/index.mjs"),
       sandbox: false,
@@ -59,7 +64,17 @@ async function openFileDialog(): Promise<void> {
 function buildMenu(): void {
   const { recent } = readRecents();
   const openRecent: MenuItemConstructorOptions[] = recent.length
-    ? recent.map((p) => ({ label: p, click: () => sendOpenFile(p) }))
+    ? recent.flatMap((p, i) => [
+        { label: p, click: () => sendOpenFile(p) },
+        // "Abrir com..." (dialogo nativo do Windows) do arquivo mais recente
+        ...(i === 0
+          ? [
+              { type: "separator" } as MenuItemConstructorOptions,
+              { label: `Abrir "${p.split(/[\\/]/).pop()}" com...`, click: () => openWith(p) } as MenuItemConstructorOptions,
+              { type: "separator" } as MenuItemConstructorOptions,
+            ]
+          : []),
+      ])
     : [{ label: "(nenhum)", enabled: false }];
 
   const template: MenuItemConstructorOptions[] = [
@@ -84,6 +99,13 @@ function buildMenu(): void {
         { role: "copy", label: "Copiar" },
         { role: "paste", label: "Colar" },
         { role: "selectAll", label: "Selecionar tudo" },
+        { type: "separator" },
+        {
+          label: "Preferencias...",
+          accelerator: "CmdOrCtrl+,",
+          click: () =>
+            (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])?.webContents.send("menu:preferences"),
+        },
       ],
     },
     {
@@ -119,6 +141,24 @@ function buildMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// abre o menu do app (Arquivo/Editar/...) como popup -- com a barra de titulo custom,
+// o menu nativo do Windows fica escondido; o botao "☰" na barra chama isto.
+ipcMain.handle("menu:popup", (e) => {
+  const m = Menu.getApplicationMenu();
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (m && win) m.popup({ window: win, x: 8, y: 34 });
+});
+
+// abre o dialogo nativo "Abrir com..." do Windows (escolher o programa); fallback pro padrao
+function openWith(p: string): boolean | Promise<string> {
+  if (process.platform === "win32") {
+    const ps = spawn("rundll32.exe", ["shell32.dll,OpenAs_RunDLL", p], { detached: true, stdio: "ignore" });
+    ps.unref(); // solta o processo pra nao prender o app
+    return true;
+  }
+  return shell.openPath(p);
+}
+
 // -- dialogs/IPC --------------------------------------------------------------
 ipcMain.handle("dialog:openFile", async () => {
   const r = await dialog.showOpenDialog({ properties: ["openFile"] });
@@ -147,6 +187,9 @@ ipcMain.handle("fs:writeFile", (_e, p: string, data: Uint8Array) => {
   writeFileSync(p, Buffer.from(data));
   return true;
 });
+
+// "Abrir com..." tambem exposto pro renderer (ex.: botao do arquivo atual)
+ipcMain.handle("shell:openWith", (_e, p: string) => openWith(p));
 
 // recentes: o renderer avisa qual arquivo abriu (setLast) e pergunta o ultimo (getLast)
 ipcMain.handle("file:setLast", (_e, p: string) => addRecent(p));
