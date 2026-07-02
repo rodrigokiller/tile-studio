@@ -46,11 +46,12 @@ exportar.
       "WM map (4bpp linear reverse)".
     - de paleta: aplicar/salvar/renomear/excluir. Embutidas: "Tons de cinza (16)" e
       "Contraste 16 cores". Aplicar um preset nunca entra na pilha de undo de pixel.
-  - **barra de titulo custom** (frameless estilo VS Code): arrasta a janela, botao ☰ abre o
-    menu do app, mostra o nome do arquivo aberto. Menu do Electron (pt-br): Arquivo (Nova
-    janela / Abrir arquivo... / Abrir recente + "Abrir com..." / Sair), Editar (+ Preferencias
-    Ctrl+,), Exibir, Janela, Ajuda. Multi-janela (1 arquivo por janela). Os **recentes**
-    (ate 8) e o ultimo aberto ficam em `userData/recents.json`.
+  - **barra de titulo custom** (frameless estilo VS Code): arrasta a janela, barra de menu com
+    botoes por item (Arquivo / Editar / Exibir / Janela / Ajuda -- cada um abre seu submenu),
+    mostra o nome do arquivo aberto. Menu do Electron (pt-br): Arquivo (Nova janela / Abrir
+    arquivo... / Abrir recente + "Abrir com..." / Sair), Editar (+ Preferencias Ctrl+,), Exibir,
+    Janela, Ajuda. Multi-janela (1 arquivo por janela). Os **recentes** (ate 8) e o ultimo
+    aberto ficam em `userData/recents.json`.
   - **janela de Preferencias** (Editar > Preferencias / Ctrl+,): modal com opcoes persistidas
     em localStorage -- reabrir o ultimo arquivo ao iniciar, e iniciar no modo Navegar.
   - navegacao pelo arquivo por offset (setas / PageUp-Down / botoes).
