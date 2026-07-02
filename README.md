@@ -11,7 +11,7 @@ sentido com bpp/largura/ordem certos (ex.: os mapas WM do Legend of Mana = 4bpp,
 abrir qualquer arquivo, ajustar os parametros ate a imagem aparecer, navegar pelo arquivo e
 exportar.
 
-## Estado atual (v0.6)
+## Estado atual (v0.7)
 
 - `src/tile.ts`: motor de tiles estilo Tile Molester. bpp **1/2/4/8** (indexado) e **16/24**
   (cor direta); modo **planar** (bitplanes por linha, MSB = pixel da esquerda) e **linear**
@@ -28,6 +28,8 @@ exportar.
   - **editor de pixel** pra qualquer bpp: no modo editar, clique/arraste pinta e grava de
     volta nos bytes. Em bpp indexado (1/2/4/8) pinta o indice de paleta; em cor direta
     (16/24bpp) pinta uma cor RGB escolhida por color-picker (16bpp com bit STP opcional);
+  - **conta-gotas** (Alt+clique no canvas): pica a cor do pixel como cor de pintura
+    (indexado seleciona o indice; direto seta o RGB); nao entra no undo;
   - **desfazer/refazer** (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y): a pilha guarda SO edicoes de
     pixel (mudancas de bytes); o estado de visualizacao nunca entra na pilha; historico
     capado em 200 entradas (descarta as mais antigas);
@@ -44,10 +46,13 @@ exportar.
       "WM map (4bpp linear reverse)".
     - de paleta: aplicar/salvar/renomear/excluir. Embutidas: "Tons de cinza (16)" e
       "Contraste 16 cores". Aplicar um preset nunca entra na pilha de undo de pixel.
-  - **menu do Electron** (pt-br): Arquivo (Nova janela / Abrir arquivo... / Abrir recente /
-    Sair), Editar, Exibir, Janela, Ajuda. Multi-janela (1 arquivo por janela). Os
-    **recentes** (ate 8) e o ultimo aberto ficam em `userData/recents.json`; ao iniciar,
-    o app reabre o ultimo arquivo automaticamente (se ainda existir).
+  - **barra de titulo custom** (frameless estilo VS Code): arrasta a janela, botao ☰ abre o
+    menu do app, mostra o nome do arquivo aberto. Menu do Electron (pt-br): Arquivo (Nova
+    janela / Abrir arquivo... / Abrir recente + "Abrir com..." / Sair), Editar (+ Preferencias
+    Ctrl+,), Exibir, Janela, Ajuda. Multi-janela (1 arquivo por janela). Os **recentes**
+    (ate 8) e o ultimo aberto ficam em `userData/recents.json`.
+  - **janela de Preferencias** (Editar > Preferencias / Ctrl+,): modal com opcoes persistidas
+    em localStorage -- reabrir o ultimo arquivo ao iniciar, e iniciar no modo Navegar.
   - navegacao pelo arquivo por offset (setas / PageUp-Down / botoes).
 
 Rodar: `npm install` e `npm run dev`.
@@ -73,6 +78,7 @@ Abra o `WM1.TIM` e use: bpp **4**, modo **linear**, tile **8x8**, offset **20**,
 - [x] Edicao de pixel em cor direta (16bpp ABGR1555 / 24bpp RGB)
 - [x] Presets salvaveis de config e de paleta (embutidos + customizados persistidos)
 - [x] Menu do Electron (multi-janela, abrir/abrir recente, reabrir o ultimo ao iniciar)
+- [x] Barra de titulo custom + janela de Preferencias + conta-gotas (Alt+clique)
 - [ ] Codec composite (tiles montados de varios sub-tiles, ex.: 3bpp = 2bpp+1bpp)
 - [ ] Modo 2D (stride) alem do 1D
 - [ ] Selecao / copiar-colar / espelhar / girar tiles
