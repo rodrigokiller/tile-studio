@@ -8,6 +8,7 @@ import {
   locatePixel,
   rgbToDirect,
   directToRgb,
+  encodeAct,
   type TileConfig,
   type PixelMode,
 } from "../../tile";
@@ -479,6 +480,26 @@ export function App(): JSX.Element {
     setMsg(`paleta carregada (${ncolors} cores)`);
   }, [ncolors]);
 
+  // exporta a paleta de pintura atual como .ACT (Adobe Color Table) pro Photoshop
+  const exportPalette = useCallback(async () => {
+    if (!indexed || !effPal) {
+      setMsg("exportar paleta so nos bpp indexados (2/4/8)");
+      return;
+    }
+    const act = encodeAct(effPal, ncolors);
+    const base = (path?.split(/[\\/]/).pop()?.replace(/\.[^.\\/]+$/, "") ?? "paleta") + `_${bpp}bpp`;
+    const out = await window.api.saveAct(base + ".act");
+    if (!out) return;
+    await window.api.writeFile(out, act);
+    setMsg(`paleta exportada (.ACT): ${out.split(/[\\/]/).pop()} -- no Photoshop: Imagem > Modo > Cores indexadas > carregar tabela`);
+  }, [indexed, effPal, ncolors, bpp, path]);
+
+  // menu Editar > Exportar paleta (.ACT); habilitado so nos bpp indexados
+  useEffect(() => window.api.onExportPalette(() => exportPalette()), [exportPalette]);
+  useEffect(() => {
+    window.api.setPaletteEnabled(indexed);
+  }, [indexed]);
+
   // -- salvar de volta no arquivo ---------------------------------------------
   const save = useCallback(async () => {
     if (!raw || !path) return;
@@ -859,7 +880,7 @@ export function App(): JSX.Element {
       </main>
 
       <aside className="inspector">
-        <h2>tile studio<span className="caret">_</span><span className="ver">v0.7</span></h2>
+        <h2>tile studio<span className="caret">_</span><span className="ver">v0.8</span></h2>
 
         {indexed && (
           <div className="palette">
@@ -913,6 +934,11 @@ export function App(): JSX.Element {
               <button className="secondary" onClick={loadPalette}>Paleta (PNG)</button>
               {palette && <button className="secondary" onClick={() => setPalette(null)}>Cinza</button>}
             </div>
+            <button
+              className="secondary"
+              onClick={exportPalette}
+              title="salva a paleta atual como .ACT (Adobe Color Table) pro Photoshop"
+            >Exportar paleta (.ACT)</button>
 
             {/* PRESETS de paleta: aplicar + salvar/renomear/excluir */}
             <div className="presets">

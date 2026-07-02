@@ -5,6 +5,9 @@ const api = {
   openPng: (): Promise<string | null> => ipcRenderer.invoke("dialog:openPng"),
   savePng: (def: string): Promise<string | null> => ipcRenderer.invoke("dialog:savePng", def),
   saveBin: (def: string): Promise<string | null> => ipcRenderer.invoke("dialog:saveBin", def),
+  // exportar paleta como .ACT (Adobe Color Table) pro Photoshop
+  saveAct: (def: string): Promise<string | null> => ipcRenderer.invoke("dialog:saveAct", def),
+  setPaletteEnabled: (on: boolean): Promise<void> => ipcRenderer.invoke("menu:setPaletteEnabled", on),
   readFile: (p: string): Promise<Uint8Array> => ipcRenderer.invoke("fs:readFile", p),
   writeFile: (p: string, data: Uint8Array): Promise<boolean> =>
     ipcRenderer.invoke("fs:writeFile", p, data),
@@ -29,6 +32,12 @@ const api = {
     const handler = (): void => cb();
     ipcRenderer.on("menu:preferences", handler);
     return () => ipcRenderer.removeListener("menu:preferences", handler);
+  },
+  // menu Editar > Exportar paleta (.ACT)
+  onExportPalette: (cb: () => void): (() => void) => {
+    const handler = (): void => cb();
+    ipcRenderer.on("menu:exportPalette", handler);
+    return () => ipcRenderer.removeListener("menu:exportPalette", handler);
   },
 };
 

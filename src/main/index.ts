@@ -101,6 +101,14 @@ function buildMenu(): void {
         { role: "selectAll", label: "Selecionar tudo" },
         { type: "separator" },
         {
+          id: "exportPalette",
+          label: "Exportar paleta (.ACT)...",
+          enabled: false, // so habilita quando o renderer estiver num bpp indexado com paleta
+          click: () =>
+            (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])?.webContents.send("menu:exportPalette"),
+        },
+        { type: "separator" },
+        {
           label: "Preferencias...",
           accelerator: "CmdOrCtrl+,",
           click: () =>
@@ -188,6 +196,18 @@ ipcMain.handle("dialog:savePng", async (_e, def: string) => {
 ipcMain.handle("dialog:saveBin", async (_e, def: string) => {
   const r = await dialog.showSaveDialog({ defaultPath: def });
   return r.canceled ? null : r.filePath;
+});
+ipcMain.handle("dialog:saveAct", async (_e, def: string) => {
+  const r = await dialog.showSaveDialog({
+    defaultPath: def,
+    filters: [{ name: "Adobe Color Table", extensions: ["act"] }],
+  });
+  return r.canceled ? null : r.filePath;
+});
+// habilita/desabilita o item "Exportar paleta" no menu Editar (o renderer chama conforme o bpp)
+ipcMain.handle("menu:setPaletteEnabled", (_e, on: boolean) => {
+  const item = Menu.getApplicationMenu()?.getMenuItemById("exportPalette");
+  if (item) item.enabled = on;
 });
 ipcMain.handle("fs:readFile", (_e, p: string) => readFileSync(p));
 ipcMain.handle("fs:writeFile", (_e, p: string, data: Uint8Array) => {

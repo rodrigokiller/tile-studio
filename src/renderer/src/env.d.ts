@@ -6,6 +6,8 @@ interface Window {
     openPng: () => Promise<string | null>;
     savePng: (def: string) => Promise<string | null>;
     saveBin: (def: string) => Promise<string | null>;
+    saveAct: (def: string) => Promise<string | null>;
+    setPaletteEnabled: (on: boolean) => Promise<void>;
     readFile: (p: string) => Promise<Uint8Array>;
     writeFile: (p: string, data: Uint8Array) => Promise<boolean>;
     pathForFile: (f: File) => string;
@@ -16,5 +18,6 @@ interface Window {
     popupMenuItem: (index: number, x: number) => Promise<void>;
     openWith: (p: string) => Promise<boolean | string>;
     onOpenPreferences: (cb: () => void) => () => void;
+    onExportPalette: (cb: () => void) => () => void;
   };
 }

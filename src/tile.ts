@@ -271,3 +271,25 @@ export function locatePixel(
     py: y % cfg.tileH,
   };
 }
+
+/**
+ * Gera uma paleta no formato Adobe Color Table (.ACT), pra usar no Photoshop (Imagem >
+ * Modo > Cores indexadas > carregar tabela). Sao 256 triplas RGB (768 bytes) + um trailer
+ * de 4 bytes: nº de cores (16-bit big-endian) e o indice transparente (0xFFFF = nenhum).
+ * `palette` = cores da paleta em RGBA (0-255, 4 bytes por indice); `count` = quantas cores.
+ */
+export function encodeAct(palette: Uint8Array, count: number): Uint8Array {
+  const out = new Uint8Array(772);
+  for (let i = 0; i < 256; i++) {
+    if (i < count) {
+      out[i * 3] = palette[i * 4] ?? 0;
+      out[i * 3 + 1] = palette[i * 4 + 1] ?? 0;
+      out[i * 3 + 2] = palette[i * 4 + 2] ?? 0;
+    }
+  }
+  out[768] = (count >> 8) & 0xff; // nº de cores (big-endian)
+  out[769] = count & 0xff;
+  out[770] = 0xff; // indice transparente: nenhum
+  out[771] = 0xff;
+  return out;
+}
