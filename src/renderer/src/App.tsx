@@ -70,6 +70,9 @@ type ByteChange = { off: number; old: number; neu: number };
 // -----------------------------------------------------------------------------
 
 export function App(): JSX.Element {
+  // botao da barra de titulo cujo menu esta aberto (highlight do hover-switch; -1 = nenhum)
+  const [openMenuIdx, setOpenMenuIdx] = useState(-1);
+  useEffect(() => window.api.onMenuOpenIndex((i) => setOpenMenuIdx(i)), []);
   const [path, setPath] = useState<string | null>(null);
   const [raw, setRaw] = useState<Uint8Array | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -684,12 +687,24 @@ export function App(): JSX.Element {
       {/* barra de titulo custom (arrasta a janela); barra de menu com botoes por item.
           os indices batem com o template do menu: Arquivo=0, Editar=1, Exibir=2, Janela=3, Ajuda=4 */}
       <div className="titlebar">
-        <div className="tb-nav">
+        {/* .menuopen: com popup aberto o :hover congela no botao clicado (mouse capturado);
+            a classe neutraliza o hover e so o .open (vindo do main) acende */}
+        <div className={"tb-nav" + (openMenuIdx >= 0 ? " menuopen" : "")}>
           {["Arquivo", "Editar", "Exibir", "Janela", "Ajuda"].map((label, i) => (
             <button
               key={label}
-              className="tb-menub"
-              onClick={(e) => window.api.popupMenuItem(i, e.currentTarget.getBoundingClientRect().left)}
+              className={"tb-menub" + (openMenuIdx === i ? " open" : "")}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                const bar = e.currentTarget.parentElement;
+                const rects = bar
+                  ? [...bar.querySelectorAll("button.tb-menub")].map((b, j) => {
+                      const r = b.getBoundingClientRect();
+                      return { index: j, x1: r.left, x2: r.right };
+                    })
+                  : [];
+                void window.api.popupMenuItem(i, e.currentTarget.getBoundingClientRect().left, rects);
+              }}
             >{label}</button>
           ))}
         </div>

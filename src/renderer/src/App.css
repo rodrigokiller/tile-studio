@@ -87,6 +87,10 @@ body::after {
   transition: color 0.12s ease, background 0.12s ease;
 }
 .tb-menub:hover { color: var(--accent); background: rgba(52, 226, 160, 0.1); }
+/* botao cujo menu esta ABERTO (o :hover nao pega com o popup nativo capturando o mouse) */
+.tb-menub.open { color: var(--accent); background: var(--accent-dim); }
+/* com popup aberto o :hover congela no botao clicado: neutraliza e deixa so o .open mandar */
+.tb-nav.menuopen .tb-menub:not(.open):hover { color: var(--muted); background: transparent; }
 .tb-navsep { width: 1px; height: 16px; background: var(--line-bright); margin: 0 5px; }
 .tb-btn {
   -webkit-app-region: no-drag;

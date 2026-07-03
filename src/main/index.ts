@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, screen, type MenuItemConstructorOptions } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -166,13 +166,67 @@ ipcMain.handle("menu:popup", (e) => {
 // abre o submenu de UM item do topo (0=Arquivo,1=Editar,...) na posicao x do botao (barra de titulo).
 // constroi um Menu NOVO a partir do template do submenu -- popar o submenu que ja pertence ao
 // applicationMenu nao funciona de forma confiavel no Electron.
-ipcMain.handle("menu:popupItem", (e, arg: { index: number; x: number }) => {
+//
+// Hover entre menus (padrao Windows: com um menu aberto, passar o mouse por outro botao troca
+// o menu sem clicar): o popup nativo CAPTURA o mouse, entao o renderer manda os retangulos dos
+// botoes e o main faz polling do cursor; sobre outro botao -> fecha e reabre o submenu daquele.
+// O renderer recebe menu:openIndex pra acender o botao certo (o :hover do CSS congela).
+type MenuBtnRect = { index: number; x1: number; x2: number };
+let popupMenu: Menu | null = null; // ref de modulo: o Menu do popup nao pode ser coletado pelo GC
+let menuPoll: ReturnType<typeof setInterval> | null = null;
+let menuSession = 0; // id da abertura atual: o callback de close so limpa se nada reabriu depois
+
+function openTopMenu(win: BrowserWindow, index: number, x: number): void {
+  const top = menuTemplate[index];
+  if (!top || !Array.isArray(top.submenu)) return;
+  popupMenu = Menu.buildFromTemplate(top.submenu as MenuItemConstructorOptions[]);
+  const session = ++menuSession;
+  win.webContents.send("menu:openIndex", index);
+  popupMenu.popup({
+    window: win,
+    x: Math.round(x),
+    y: 34,
+    callback: () => {
+      // fechou de verdade (Esc/clicou item/fora)? para o polling e apaga o highlight
+      setTimeout(() => {
+        if (session === menuSession) {
+          if (menuPoll) {
+            clearInterval(menuPoll);
+            menuPoll = null;
+          }
+          if (!win.isDestroyed()) win.webContents.send("menu:openIndex", -1);
+        }
+      }, 80);
+    },
+  });
+}
+
+ipcMain.handle("menu:popupItem", (e, arg: { index: number; x: number; buttons?: MenuBtnRect[] }) => {
   const win = BrowserWindow.fromWebContents(e.sender);
-  const top = menuTemplate[arg.index];
-  if (win && top && Array.isArray(top.submenu)) {
-    const sub = Menu.buildFromTemplate(top.submenu as MenuItemConstructorOptions[]);
-    sub.popup({ window: win, x: Math.round(arg.x), y: 34 });
-  }
+  if (!win) return;
+  const buttons = arg.buttons ?? [];
+  let current = arg.index;
+  openTopMenu(win, current, arg.x);
+  if (menuPoll) clearInterval(menuPoll);
+  if (!buttons.length) return; // sem retangulos nao tem como fazer hover
+  menuPoll = setInterval(() => {
+    if (win.isDestroyed()) {
+      if (menuPoll) clearInterval(menuPoll);
+      menuPoll = null;
+      return;
+    }
+    const pt = screen.getCursorScreenPoint();
+    const cb = win.getContentBounds();
+    const x = pt.x - cb.x;
+    const y = pt.y - cb.y;
+    if (y < 0 || y >= 34) return; // so vale na faixa da barra de titulo
+    const hit = buttons.find((b) => x >= b.x1 && x < b.x2);
+    if (hit && hit.index !== current) {
+      current = hit.index;
+      popupMenu?.closePopup(win);
+      openTopMenu(win, current, hit.x1);
+    }
+  }, 60);
 });
 
 // abre o dialogo nativo "Abrir com..." do Windows (escolher o programa); fallback pro padrao

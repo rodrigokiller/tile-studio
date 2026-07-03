@@ -23,8 +23,15 @@ const api = {
   },
   // barra de titulo custom: abre o menu do app como popup, ou o submenu de um item do topo
   popupMenu: (): Promise<void> => ipcRenderer.invoke("menu:popup"),
-  popupMenuItem: (index: number, x: number): Promise<void> =>
-    ipcRenderer.invoke("menu:popupItem", { index, x }),
+  // buttons = retangulos de todos os botoes (hover-switch estilo Windows, feito no main)
+  popupMenuItem: (index: number, x: number, buttons?: { index: number; x1: number; x2: number }[]): Promise<void> =>
+    ipcRenderer.invoke("menu:popupItem", { index, x, buttons }),
+  // indice do menu aberto na barra (-1 = fechou): acende o botao certo durante o hover-switch
+  onMenuOpenIndex: (cb: (i: number) => void): (() => void) => {
+    const handler = (_e: IpcRendererEvent, i: number): void => cb(i);
+    ipcRenderer.on("menu:openIndex", handler);
+    return () => ipcRenderer.removeListener("menu:openIndex", handler);
+  },
   // "Abrir com..." (dialogo nativo do Windows) do arquivo atual
   openWith: (p: string): Promise<boolean | string> => ipcRenderer.invoke("shell:openWith", p),
   // menu Editar > Preferencias (Ctrl+,) manda o app abrir a janela de preferencias
