@@ -46,6 +46,12 @@ const api = {
     ipcRenderer.on("menu:exportPalette", handler);
     return () => ipcRenderer.removeListener("menu:exportPalette", handler);
   },
+  // Arquivo > Fechar arquivo / Importar PNG
+  onMenuSimple: (channel: "menu:closeFile" | "menu:importPng", cb: () => void): (() => void) => {
+    const handler = (): void => cb();
+    ipcRenderer.on(channel, handler);
+    return () => ipcRenderer.removeListener(channel, handler);
+  },
 };
 
 contextBridge.exposeInMainWorld("api", api);

@@ -15,9 +15,11 @@ interface Window {
     getLastFile: () => Promise<string>;
     onOpenFile: (cb: (path: string) => void) => () => void;
     popupMenu: () => Promise<void>;
-    popupMenuItem: (index: number, x: number) => Promise<void>;
+    popupMenuItem: (index: number, x: number, buttons?: { index: number; x1: number; x2: number }[]) => Promise<void>;
+    onMenuOpenIndex: (cb: (i: number) => void) => () => void;
     openWith: (p: string) => Promise<boolean | string>;
     onOpenPreferences: (cb: () => void) => () => void;
     onExportPalette: (cb: () => void) => () => void;
+    onMenuSimple: (channel: "menu:closeFile" | "menu:importPng", cb: () => void) => () => void;
   };
 }

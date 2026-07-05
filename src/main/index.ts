@@ -93,6 +93,18 @@ function buildMenu(): void {
         { label: "Abrir arquivo...", accelerator: "CmdOrCtrl+O", click: () => openFileDialog() },
         { label: "Abrir recente", submenu: openRecent },
         { type: "separator" },
+        {
+          label: "Importar PNG (por cima da vista)...",
+          click: () =>
+            (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])?.webContents.send("menu:importPng"),
+        },
+        {
+          label: "Fechar arquivo",
+          accelerator: "CmdOrCtrl+W",
+          click: () =>
+            (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])?.webContents.send("menu:closeFile"),
+        },
+        { type: "separator" },
         { role: "quit", label: "Sair" },
       ],
     },

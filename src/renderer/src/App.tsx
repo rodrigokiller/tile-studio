@@ -28,6 +28,15 @@ const MAX_UNDO = 200;
 
 // -- helpers de paleta --------------------------------------------------------
 
+// coordenada do canvas (px da imagem) a partir do mouse, ja clampada
+function cvXY(cv: HTMLCanvasElement, clientX: number, clientY: number): { x: number; y: number } {
+  const rect = cv.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(cv.width - 1, Math.floor(((clientX - rect.left) / rect.width) * cv.width))),
+    y: Math.max(0, Math.min(cv.height - 1, Math.floor(((clientY - rect.top) / rect.height) * cv.height))),
+  };
+}
+
 async function pngToRgba(bytes: Uint8Array): Promise<{ width: number; height: number; rgba: Uint8Array }> {
   const bmp = await createImageBitmap(new Blob([bytes as BlobPart], { type: "image/png" }));
   const cv = document.createElement("canvas");
@@ -104,8 +113,13 @@ export function App(): JSX.Element {
   );
 
   // ferramenta ativa: editar (pinta) ou navegar (pan). Espaco/Ctrl = pan temporario.
-  const [tool, setTool] = useState<"edit" | "pan">(initialTool);
+  const [tool, setTool] = useState<"edit" | "pan" | "select">(initialTool);
   const [tempPan, setTempPan] = useState(false);
+  // selecao retangular (px do canvas) pra copiar/colar; Esc limpa
+  const [selRect, setSelRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const selStart = useRef<{ x: number; y: number } | null>(null);
+  // copia interna (valores crus de pixel; o Ctrl+C tambem poe um PNG no clipboard do sistema)
+  const clipRef = useRef<{ w: number; h: number; vals: Int32Array } | null>(null);
 
   // presets: customizados (persistidos) + selecao atual nos dropdowns
   const [customCfgs, setCustomCfgs] = useState<ConfigPreset[]>(() => loadCustomConfigs());
@@ -237,7 +251,19 @@ export function App(): JSX.Element {
       }
       ctx.stroke();
     }
-  }, [view, showGrid, tileW, tileH]);
+    // moldura da selecao (tracinho preto+branco, estilo marching ants)
+    if (selRect) {
+      ctx.save();
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = "#000";
+      ctx.strokeRect(selRect.x + 0.5, selRect.y + 0.5, selRect.w - 1 || 1, selRect.h - 1 || 1);
+      ctx.lineDashOffset = 4;
+      ctx.strokeStyle = "#fff";
+      ctx.strokeRect(selRect.x + 0.5, selRect.y + 0.5, selRect.w - 1 || 1, selRect.h - 1 || 1);
+      ctx.restore();
+    }
+  }, [view, showGrid, tileW, tileH, selRect]);
 
   // navegacao pelo arquivo: 1 linha de tiles = cols tiles
   const bytesPerTile = tileSizeBytes(cfg);
@@ -395,6 +421,17 @@ export function App(): JSX.Element {
       pickAt(e.clientX, e.clientY);
       return;
     }
+    // ferramenta Selecionar: arrasta um retangulo (px) pra copiar/colar
+    if (tool === "select" && !tempPan) {
+      const cv = canvasRef.current;
+      if (!cv) return;
+      const p = cvXY(cv, e.clientX, e.clientY);
+      selStart.current = p;
+      setSelRect({ x: p.x, y: p.y, w: 1, h: 1 });
+      dragging.current = true;
+      e.preventDefault();
+      return;
+    }
     if (panning) {
       // inicia pan: guarda posicao inicial e scroll atual do viewer
       const v = viewerRef.current;
@@ -411,6 +448,19 @@ export function App(): JSX.Element {
 
   const onCanvasMove = (e: React.MouseEvent) => {
     if (!dragging.current) return;
+    if (tool === "select" && selStart.current) {
+      const cv = canvasRef.current;
+      if (!cv) return;
+      const p = cvXY(cv, e.clientX, e.clientY);
+      const s = selStart.current;
+      setSelRect({
+        x: Math.min(s.x, p.x),
+        y: Math.min(s.y, p.y),
+        w: Math.abs(p.x - s.x) + 1,
+        h: Math.abs(p.y - s.y) + 1,
+      });
+      return;
+    }
     if (panning) {
       const v = viewerRef.current;
       const ps = panStart.current;
@@ -441,6 +491,195 @@ export function App(): JSX.Element {
     window.addEventListener("mouseup", up);
     return () => window.removeEventListener("mouseup", up);
   }, []);
+
+  // -- selecao: copiar / colar / importar PNG ---------------------------------
+
+  /** Ctrl+C: guarda os valores crus da selecao E poe um PNG no clipboard do sistema
+   *  (da pra colar direto no Photoshop; e o Ctrl+V daqui tambem le de la). */
+  const copySelection = useCallback(async () => {
+    if (!raw || !view || !selRect) return;
+    const { x, y, w, h } = selRect;
+    const vals = new Int32Array(w * h);
+    for (let yy = 0; yy < h; yy++)
+      for (let xx = 0; xx < w; xx++) {
+        const loc = locatePixel(cfg, x + xx, y + yy);
+        vals[yy * w + xx] = readPixelIndex(raw, cfg, loc.tileBase, loc.px, loc.py);
+      }
+    clipRef.current = { w, h, vals };
+    try {
+      const cv = document.createElement("canvas");
+      cv.width = w;
+      cv.height = h;
+      const cx = cv.getContext("2d")!;
+      const region = cx.createImageData(w, h);
+      for (let yy = 0; yy < h; yy++) {
+        const src = ((y + yy) * view.width + x) * 4;
+        region.data.set(view.rgba.subarray(src, src + w * 4), yy * w * 4);
+      }
+      cx.putImageData(region, 0, 0);
+      const blob: Blob = await new Promise((res, rej) => cv.toBlob((b) => (b ? res(b) : rej(new Error("png"))), "image/png"));
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      setMsg(`copiado ${w}x${h}px (tambem como imagem, pro Photoshop etc.)`);
+    } catch {
+      setMsg(`copiado ${w}x${h}px (interno)`);
+    }
+  }, [raw, view, selRect, cfg]);
+
+  /** escreve um bloco de pixels em (dx,dy) como UMA entrada de undo.
+   *  `value(xx,yy)` retorna o valor do pixel ou null pra pular (transparencia). */
+  const applyBlockAt = useCallback(
+    (w: number, h: number, dx: number, dy: number, value: (xx: number, yy: number) => number | null): number => {
+      if (!raw || !view) return 0;
+      const before = new Uint8Array(raw);
+      let painted = 0;
+      for (let yy = 0; yy < h; yy++) {
+        const py = dy + yy;
+        if (py >= view.height) break;
+        for (let xx = 0; xx < w; xx++) {
+          const px = dx + xx;
+          if (px >= view.width) continue;
+          const v = value(xx, yy);
+          if (v === null) continue;
+          const loc = locatePixel(cfg, px, py);
+          if (readPixelIndex(raw, cfg, loc.tileBase, loc.px, loc.py) === v) continue;
+          writePixelIndex(raw, cfg, loc.tileBase, loc.px, loc.py, v);
+          painted++;
+        }
+      }
+      // uma passada de diff = uma entrada de undo (old/neu certos mesmo com 2 px por byte)
+      const changes: ByteChange[] = [];
+      for (let o = 0; o < raw.length; o++) if (before[o] !== raw[o]) changes.push({ off: o, old: before[o], neu: raw[o] });
+      if (changes.length) {
+        undoStack.current.push(changes);
+        if (undoStack.current.length > MAX_UNDO) undoStack.current.splice(0, undoStack.current.length - MAX_UNDO);
+        redoStack.current = [];
+        setHistLen({ u: undoStack.current.length, r: 0 });
+        setRaw(new Uint8Array(raw));
+        setDirty(true);
+      }
+      return painted;
+    },
+    [raw, view, cfg],
+  );
+
+  /** converte RGBA pra valores do formato atual: indexado quantiza pra cor mais proxima
+   *  da paleta; 16/24bpp converte direto. Alpha < 128 nao pinta. */
+  const applyRgbaAt = useCallback(
+    (rgba: Uint8Array, w: number, h: number, dx: number, dy: number): number =>
+      applyBlockAt(w, h, dx, dy, (xx, yy) => {
+        const si = (yy * w + xx) * 4;
+        if (rgba[si + 3] < 128) return null;
+        const r = rgba[si];
+        const g = rgba[si + 1];
+        const b = rgba[si + 2];
+        if (!indexed) return rgbToDirect(bpp as 16 | 24, r, g, b, 0);
+        const pal = effPal!;
+        let best = 0;
+        let bd = Infinity;
+        for (let c = 0; c < ncolors; c++) {
+          const dr = r - pal[c * 4];
+          const dg = g - pal[c * 4 + 1];
+          const db = b - pal[c * 4 + 2];
+          const d = dr * dr + dg * dg + db * db;
+          if (d < bd) {
+            bd = d;
+            best = c;
+          }
+        }
+        return best;
+      }),
+    [applyBlockAt, indexed, effPal, ncolors, bpp],
+  );
+
+  /** Ctrl+V: cola no canto da selecao (ou em 0,0 da vista). Prefere a imagem do clipboard
+   *  do sistema (Photoshop etc., com quantizacao pra paleta); senao usa a copia interna. */
+  const pasteClipboard = useCallback(async () => {
+    if (!raw || !view) return;
+    const dx = selRect?.x ?? 0;
+    const dy = selRect?.y ?? 0;
+    try {
+      const items = await navigator.clipboard.read();
+      for (const it of items) {
+        const type = it.types.find((t) => t.startsWith("image/"));
+        if (!type) continue;
+        const bmp = await createImageBitmap(await it.getType(type));
+        const cv = document.createElement("canvas");
+        cv.width = bmp.width;
+        cv.height = bmp.height;
+        const cx = cv.getContext("2d")!;
+        cx.drawImage(bmp, 0, 0);
+        const data = cx.getImageData(0, 0, bmp.width, bmp.height);
+        const n = applyRgbaAt(new Uint8Array(data.data.buffer), bmp.width, bmp.height, dx, dy);
+        setMsg(
+          `colado ${bmp.width}x${bmp.height}px em (${dx},${dy})` +
+            (indexed ? " -- cores ajustadas pra mais proxima da paleta" : "") +
+            ` (${n} px)`,
+        );
+        return;
+      }
+    } catch {
+      /* sem imagem no clipboard do sistema: tenta a copia interna */
+    }
+    const clip = clipRef.current;
+    if (!clip) {
+      setMsg("nada pra colar (selecione e Ctrl+C aqui, ou copie uma imagem em outro app)");
+      return;
+    }
+    const n = applyBlockAt(clip.w, clip.h, dx, dy, (xx, yy) => clip.vals[yy * clip.w + xx]);
+    setMsg(`colado ${clip.w}x${clip.h}px em (${dx},${dy}) (${n} px, valores exatos)`);
+  }, [raw, view, selRect, applyRgbaAt, applyBlockAt, indexed]);
+
+  /** importa um PNG POR CIMA da vista atual (0,0 do canvas = offset atual). Round-trip
+   *  perfeito com o "Exportar PNG": exporta, edita fora, importa de volta. */
+  const importPng = useCallback(async () => {
+    if (!raw || !view) return;
+    const p = await window.api.openPng();
+    if (!p) return;
+    try {
+      const { width, height, rgba } = await pngToRgba(new Uint8Array(await window.api.readFile(p)));
+      const n = applyRgbaAt(rgba, width, height, 0, 0);
+      const cut = width !== view.width || height !== view.height ? " (tamanho difere da vista: aplicado parcial)" : "";
+      setMsg(`PNG importado ${width}x${height}px sobre a vista${indexed ? ", cores ajustadas pra paleta" : ""} -- ${n} px${cut}`);
+    } catch (err) {
+      setMsg("falha ao importar PNG: " + (err as Error).message);
+    }
+  }, [raw, view, applyRgbaAt, indexed]);
+
+  /** Arquivo > Fechar arquivo (Ctrl+W): volta pra tela vazia. */
+  const closeFile = useCallback(() => {
+    if (!raw) return;
+    if (dirty && !window.confirm("O arquivo tem alteracoes nao salvas. Fechar mesmo assim?")) return;
+    setPath(null);
+    setRaw(null);
+    setDirty(false);
+    setSelRect(null);
+    setMsg(null);
+    undoStack.current = [];
+    redoStack.current = [];
+    setHistLen({ u: 0, r: 0 });
+  }, [raw, dirty]);
+
+  useEffect(() => window.api.onMenuSimple("menu:closeFile", () => closeFile()), [closeFile]);
+  useEffect(() => window.api.onMenuSimple("menu:importPng", () => void importPng()), [importPng]);
+
+  // Ctrl+C copia a selecao / Ctrl+V cola / Esc limpa a selecao
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && selRect) {
+        e.preventDefault();
+        void copySelection();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+        void pasteClipboard();
+      } else if (e.key === "Escape") {
+        setSelRect(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selRect, copySelection, pasteClipboard]);
 
   // -- paleta editavel --------------------------------------------------------
   const setPalColor = useCallback(
@@ -784,6 +1023,11 @@ export function App(): JSX.Element {
             onClick={() => setTool("pan")}
             title="Navegar: clicar-e-arrastar move a imagem (pan)"
           >Navegar</button>
+          <button
+            className={"tool" + (tool === "select" && !tempPan ? " on" : "")}
+            onClick={() => setTool("select")}
+            title="Selecionar: arraste um retangulo; Ctrl+C copia (interno + imagem pro sistema), Ctrl+V cola no canto da selecao (aceita imagem do Photoshop, cores ajustadas pra paleta); Esc limpa"
+          >Selecionar</button>
         </div>
 
         <div className="tile">
@@ -871,6 +1115,14 @@ export function App(): JSX.Element {
           <button className="secondary" onClick={saveAs} disabled={!raw}>Salvar como</button>
         </div>
         <button className="secondary" onClick={exportPng} disabled={!view}>Exportar PNG</button>
+        <button
+          className="secondary"
+          onClick={importPng}
+          disabled={!view}
+          title="aplica um PNG por cima da vista atual (round-trip com o Exportar PNG); cores ajustadas pra paleta"
+        >
+          Importar PNG
+        </button>
         {msg && <div className="msg">{msg}</div>}
       </aside>
 
