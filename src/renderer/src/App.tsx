@@ -1011,23 +1011,23 @@ export function App(): JSX.Element {
         <button className="primary" onClick={() => open()}>Abrir arquivo</button>
         {path && <div className="folder" title={path}>{path}{dirty ? " *" : ""}</div>}
 
-        {/* toggle claro editar vs navegar */}
+        {/* ferramentas em 3 letras, estilo terminal (tooltip explica cada uma) */}
         <div className="toolrow">
           <button
             className={"tool" + (tool === "edit" && !tempPan ? " on" : "")}
             onClick={() => setTool("edit")}
-            title="Editar: clicar pinta pixels"
-          >Editar</button>
+            title="EDITAR: clicar pinta pixels (Alt+clique = conta-gotas)"
+          >edi</button>
           <button
             className={"tool" + (panning ? " on" : "")}
             onClick={() => setTool("pan")}
-            title="Navegar: clicar-e-arrastar move a imagem (pan)"
-          >Navegar</button>
+            title="NAVEGAR: clicar-e-arrastar move a imagem (segurar Espaco tambem)"
+          >nav</button>
           <button
             className={"tool" + (tool === "select" && !tempPan ? " on" : "")}
             onClick={() => setTool("select")}
-            title="Selecionar: arraste um retangulo; Ctrl+C copia (interno + imagem pro sistema), Ctrl+V cola no canto da selecao (aceita imagem do Photoshop, cores ajustadas pra paleta); Esc limpa"
-          >Selecionar</button>
+            title="SELECIONAR: arraste um retangulo; Ctrl+C copia (interno + imagem pro sistema), Ctrl+V cola no canto da selecao (aceita imagem do Photoshop, cores ajustadas pra paleta); Esc limpa"
+          >sel</button>
         </div>
 
         <div className="tile">
