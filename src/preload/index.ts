@@ -11,6 +11,8 @@ export type UpdStatus = {
 const api = {
   openFile: (): Promise<string | null> => ipcRenderer.invoke("dialog:openFile"),
   openPng: (): Promise<string | null> => ipcRenderer.invoke("dialog:openPng"),
+  // importar paleta (.act/.pal/.png): abre o dialogo e devolve o caminho escolhido
+  openPalette: (): Promise<string | null> => ipcRenderer.invoke("dialog:openPalette"),
   savePng: (def: string): Promise<string | null> => ipcRenderer.invoke("dialog:savePng", def),
   saveBin: (def: string): Promise<string | null> => ipcRenderer.invoke("dialog:saveBin", def),
   // exportar paleta como .ACT (Adobe Color Table) pro Photoshop

@@ -19,6 +19,23 @@
 
 export type PixelMode = "planar" | "linear";
 
+/**
+ * Codec nomeado por console. "generic" = comportamento antigo (usa bpp/mode/reverse).
+ * Os demais FIXAM bpp e tile 8x8 e tem seu proprio intercalamento real de bits/planos
+ * (o "planar" generico e planar-por-linha e NAO bate com o intercalamento dos consoles).
+ * Veja CONSOLE_CODECS e readCodecPixel/writeCodecPixel.
+ */
+export type ConsoleCodec =
+  | "generic"
+  | "nes2" // NES 2bpp, planar sequencial (plano0 8 bytes, depois plano1 8 bytes)
+  | "gb2" // Game Boy 2bpp, planar intercalado por linha
+  | "snes2" // SNES 2bpp, identico ao Game Boy
+  | "snes4" // SNES 4bpp, dois pares de planos intercalados por linha (16+16 bytes)
+  | "snes8" // SNES 8bpp, quatro pares de planos intercalados por linha (4x16 bytes)
+  | "md4" // Mega Drive/Genesis 4bpp, linear packed, nibble ALTO = pixel esquerdo
+  | "gba4" // GBA 4bpp, linear packed, nibble BAIXO = pixel esquerdo
+  | "gba8"; // GBA 8bpp, linear (1 byte por pixel)
+
 export interface TileConfig {
   bpp: 1 | 2 | 4 | 8 | 16 | 24;
   mode: PixelMode; // "planar" ou "linear" (ignorado para 16/24bpp = cor direta)
@@ -29,6 +46,164 @@ export interface TileConfig {
   reverse?: boolean; // linear: ordering reverse (LSB = pixel da esquerda)
   palette?: Uint8Array; // RGBA por indice (para bpp<=8); default: rampa de cinza
   byteOffset?: number; // pula N bytes antes de comecar (ex.: cabecalho)
+  codec?: ConsoleCodec; // codec por console; ausente/"generic" = usa bpp/mode/reverse acima
+}
+
+/** Metadados de um codec de console (bpp e tamanho fixos, tile sempre 8x8). */
+export interface CodecInfo {
+  bpp: 2 | 4 | 8; // bpp fixo do formato
+  tileW: 8;
+  tileH: 8;
+  tileBytes: number; // bytes ocupados por UM tile 8x8
+  label: string; // rotulo pro dropdown da UI
+}
+
+/** Tabela dos codecs de console (tudo tile 8x8). "generic" NAO entra aqui. */
+export const CONSOLE_CODECS: Record<Exclude<ConsoleCodec, "generic">, CodecInfo> = {
+  nes2: { bpp: 2, tileW: 8, tileH: 8, tileBytes: 16, label: "NES 2bpp" },
+  gb2: { bpp: 2, tileW: 8, tileH: 8, tileBytes: 16, label: "Game Boy 2bpp" },
+  snes2: { bpp: 2, tileW: 8, tileH: 8, tileBytes: 16, label: "SNES 2bpp" },
+  snes4: { bpp: 4, tileW: 8, tileH: 8, tileBytes: 32, label: "SNES 4bpp" },
+  snes8: { bpp: 8, tileW: 8, tileH: 8, tileBytes: 64, label: "SNES 8bpp" },
+  md4: { bpp: 4, tileW: 8, tileH: 8, tileBytes: 32, label: "Mega Drive 4bpp" },
+  gba4: { bpp: 4, tileW: 8, tileH: 8, tileBytes: 32, label: "GBA 4bpp" },
+  gba8: { bpp: 8, tileW: 8, tileH: 8, tileBytes: 64, label: "GBA 8bpp" },
+};
+
+// -- codecs de console: leitura/escrita de UM pixel (tile 8x8) ----------------
+// Helpers de bit (planar): o bit 7 (MSB) e o pixel da esquerda (px=0), como nos consoles.
+
+/** Le o bit do pixel px (0=esquerda) do byte em `o`. Fora do buffer = 0. */
+function getBit(data: Uint8Array, o: number, px: number): number {
+  return ((data[o] ?? 0) >> (7 - px)) & 1;
+}
+
+/** Grava o bit do pixel px (0=esquerda) no byte em `o`. Ignora offset fora do buffer. */
+function setBit(data: Uint8Array, o: number, px: number, bit: number): void {
+  if (o < 0 || o >= data.length) return;
+  const m = 1 << (7 - px);
+  data[o] = bit ? data[o] | m : data[o] & ~m;
+}
+
+/**
+ * Le o indice de UM pixel (px,py dentro de um tile 8x8) no formato de `codec`.
+ * `base` = offset em bytes onde o tile comeca. Espelhado por writeCodecPixel.
+ */
+export function readCodecPixel(
+  codec: Exclude<ConsoleCodec, "generic">,
+  data: Uint8Array,
+  base: number,
+  px: number,
+  py: number,
+): number {
+  switch (codec) {
+    case "nes2": {
+      // plano0 = bytes 0..7 (1 por linha); plano1 = bytes 8..15
+      return getBit(data, base + py, px) | (getBit(data, base + 8 + py, px) << 1);
+    }
+    case "gb2":
+    case "snes2": {
+      // por linha: byte do plano0 entao byte do plano1
+      const r = base + py * 2;
+      return getBit(data, r, px) | (getBit(data, r + 1, px) << 1);
+    }
+    case "snes4": {
+      // 16 bytes planos 0&1 intercalados por linha, depois 16 bytes planos 2&3
+      const a = base + py * 2;
+      const b = base + 16 + py * 2;
+      return (
+        getBit(data, a, px) |
+        (getBit(data, a + 1, px) << 1) |
+        (getBit(data, b, px) << 2) |
+        (getBit(data, b + 1, px) << 3)
+      );
+    }
+    case "snes8": {
+      // quatro blocos de 16 bytes; bloco k = planos 2k e 2k+1 intercalados por linha
+      let v = 0;
+      for (let blk = 0; blk < 4; blk++) {
+        const o = base + blk * 16 + py * 2;
+        v |= getBit(data, o, px) << (blk * 2);
+        v |= getBit(data, o + 1, px) << (blk * 2 + 1);
+      }
+      return v;
+    }
+    case "md4": {
+      // linear packed: 4 bytes por linha, nibble ALTO = pixel esquerdo
+      const b = data[base + py * 4 + (px >> 1)] ?? 0;
+      return px & 1 ? b & 0x0f : b >> 4;
+    }
+    case "gba4": {
+      // linear packed: 4 bytes por linha, nibble BAIXO = pixel esquerdo
+      const b = data[base + py * 4 + (px >> 1)] ?? 0;
+      return px & 1 ? b >> 4 : b & 0x0f;
+    }
+    case "gba8": {
+      // linear: 8 bytes por linha, 1 byte por pixel
+      return data[base + py * 8 + px] ?? 0;
+    }
+  }
+}
+
+/** Grava o indice de UM pixel no formato de `codec`. Espelha readCodecPixel. */
+export function writeCodecPixel(
+  codec: Exclude<ConsoleCodec, "generic">,
+  data: Uint8Array,
+  base: number,
+  px: number,
+  py: number,
+  value: number,
+): void {
+  switch (codec) {
+    case "nes2":
+      setBit(data, base + py, px, value & 1);
+      setBit(data, base + 8 + py, px, (value >> 1) & 1);
+      return;
+    case "gb2":
+    case "snes2": {
+      const r = base + py * 2;
+      setBit(data, r, px, value & 1);
+      setBit(data, r + 1, px, (value >> 1) & 1);
+      return;
+    }
+    case "snes4": {
+      const a = base + py * 2;
+      const b = base + 16 + py * 2;
+      setBit(data, a, px, value & 1);
+      setBit(data, a + 1, px, (value >> 1) & 1);
+      setBit(data, b, px, (value >> 2) & 1);
+      setBit(data, b + 1, px, (value >> 3) & 1);
+      return;
+    }
+    case "snes8": {
+      for (let blk = 0; blk < 4; blk++) {
+        const o = base + blk * 16 + py * 2;
+        setBit(data, o, px, (value >> (blk * 2)) & 1);
+        setBit(data, o + 1, px, (value >> (blk * 2 + 1)) & 1);
+      }
+      return;
+    }
+    case "md4": {
+      const o = base + py * 4 + (px >> 1);
+      if (o < 0 || o >= data.length) return;
+      const v = value & 0x0f;
+      data[o] = px & 1 ? (data[o] & 0xf0) | v : (data[o] & 0x0f) | (v << 4);
+      return;
+    }
+    case "gba4": {
+      const o = base + py * 4 + (px >> 1);
+      if (o < 0 || o >= data.length) return;
+      const v = value & 0x0f;
+      data[o] = px & 1 ? (data[o] & 0x0f) | (v << 4) : (data[o] & 0xf0) | v;
+      return;
+    }
+    case "gba8": {
+      const o = base + py * 8 + px;
+      if (o < 0 || o >= data.length) return;
+      data[o] = value & 0xff;
+      return;
+    }
+  }
 }
 
 /** Rampa de cinza com n cores (RGBA). */
@@ -46,6 +221,7 @@ export function grayPaletteRGBA(n: number): Uint8Array {
 
 /** Bytes ocupados por UM tile no stream, para a config dada. */
 export function tileSizeBytes(cfg: TileConfig): number {
+  if (cfg.codec && cfg.codec !== "generic") return CONSOLE_CODECS[cfg.codec].tileBytes;
   const { bpp, tileW, tileH } = cfg;
   if (bpp === 16) return tileW * tileH * 2;
   if (bpp === 24) return tileW * tileH * 3;
@@ -66,6 +242,7 @@ export function readPixelIndex(
   px: number,
   py: number,
 ): number {
+  if (cfg.codec && cfg.codec !== "generic") return readCodecPixel(cfg.codec, data, tileBase, px, py);
   const { bpp, tileW } = cfg;
   if (bpp === 16) {
     const o = tileBase + (py * tileW + px) * 2;
@@ -111,6 +288,10 @@ export function writePixelIndex(
   py: number,
   value: number,
 ): void {
+  if (cfg.codec && cfg.codec !== "generic") {
+    writeCodecPixel(cfg.codec, data, tileBase, px, py, value);
+    return;
+  }
   const { bpp, tileW } = cfg;
   if (bpp === 16) {
     const o = tileBase + (py * tileW + px) * 2;

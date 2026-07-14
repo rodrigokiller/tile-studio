@@ -351,6 +351,19 @@ ipcMain.handle("dialog:openPng", async () => {
   });
   return r.canceled ? null : r.filePaths[0];
 });
+// importar paleta: .act (Adobe), .pal (Microsoft RIFF / JASC) ou .png
+ipcMain.handle("dialog:openPalette", async () => {
+  const r = await dialog.showOpenDialog({
+    properties: ["openFile"],
+    filters: [
+      { name: "Paletas (.act, .pal, .png)", extensions: ["act", "pal", "png"] },
+      { name: "Adobe Color Table", extensions: ["act"] },
+      { name: "Paleta (Microsoft/JASC)", extensions: ["pal"] },
+      { name: "PNG", extensions: ["png"] },
+    ],
+  });
+  return r.canceled ? null : r.filePaths[0];
+});
 ipcMain.handle("dialog:savePng", async (_e, def: string) => {
   const r = await dialog.showSaveDialog({
     defaultPath: def,

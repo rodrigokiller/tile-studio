@@ -9,9 +9,13 @@ import {
   rgbToDirect,
   directToRgb,
   encodeAct,
+  CONSOLE_CODECS,
   type TileConfig,
   type PixelMode,
+  type ConsoleCodec,
 } from "../../tile";
+import { decodeTim, color15ToRgba } from "../../tim";
+import { decodePaletteFile, fitPalette } from "../../palette";
 import {
   BUILTIN_CONFIG_PRESETS,
   BUILTIN_PALETTE_PRESETS,
@@ -47,6 +51,19 @@ async function pngToRgba(bytes: Uint8Array): Promise<{ width: number; height: nu
   ctx.drawImage(bmp, 0, 0);
   const d = ctx.getImageData(0, 0, bmp.width, bmp.height);
   return { width: bmp.width, height: bmp.height, rgba: new Uint8Array(d.data.buffer) };
+}
+
+/** Converte UMA CLUT (linha `row` de um TIM multi-CLUT) de cores 15-bit pra paleta RGBA do editor. */
+function clutRowToRgba(clut: Uint16Array, clutW: number, row: number): Uint8Array {
+  const out = new Uint8Array(clutW * 4);
+  for (let i = 0; i < clutW; i++) {
+    const [r, g, b, a] = color15ToRgba(clut[row * clutW + i] ?? 0);
+    out[i * 4] = r;
+    out[i * 4 + 1] = g;
+    out[i * 4 + 2] = b;
+    out[i * 4 + 3] = a;
+  }
+  return out;
 }
 
 /** Extrai ate `count` cores unicas de um RGBA (ex.: de um PNG de paleta). */
@@ -127,6 +144,9 @@ export function App(): JSX.Element {
 
   const [bpp, setBpp] = useState<TileConfig["bpp"]>(1);
   const [mode, setMode] = useState<PixelMode>("planar");
+  // codec por console (ITEM 1): "generic" = usa bpp/mode; um console trava bpp e tile 8x8
+  const [codec, setCodec] = useState<ConsoleCodec>("generic");
+  const codecOn = codec !== "generic";
   const [tileW, setTileW] = useState(16);
   const [tileH, setTileH] = useState(12);
   const [cols, setCols] = useState(16);
@@ -136,6 +156,9 @@ export function App(): JSX.Element {
   const [zoom, setZoom] = useState(4);
 
   const [palette, setPalette] = useState<Uint8Array | null>(null);
+  // TIM multi-CLUT: guarda as CLUTs cruas pra o seletor trocar qual paleta usar (ITEM 2)
+  const [timClut, setTimClut] = useState<{ clut: Uint16Array; clutW: number; clutH: number } | null>(null);
+  const [timClutIdx, setTimClutIdx] = useState(0);
   const [palIndex, setPalIndex] = useState(1); // cor "de frente" (indice que pinta, bpp<=8)
   const [dirColor, setDirColor] = useState("#34e2a0"); // cor RGB de pintura (16/24bpp)
   const [dirStp, setDirStp] = useState(false); // bit STP/mascara pra 16bpp
@@ -198,37 +221,102 @@ export function App(): JSX.Element {
       reverse,
       byteOffset: offset,
       palette: effPal,
+      codec,
     }),
-    [bpp, mode, tileW, tileH, cols, tileRows, reverse, offset, effPal],
+    [bpp, mode, tileW, tileH, cols, tileRows, reverse, offset, effPal, codec],
   );
+
+  // troca de codec: "generico" volta ao comportamento por bpp/mode; um console TRAVA bpp e
+  // o tile em 8x8 (o formato define isso). NAO mexe nos bytes nem no undo.
+  const applyCodec = useCallback((c: ConsoleCodec) => {
+    setCodec(c);
+    if (c !== "generic") {
+      const info = CONSOLE_CODECS[c];
+      setBpp(info.bpp);
+      setTileW(info.tileW);
+      setTileH(info.tileH);
+    }
+  }, []);
 
   // -- pilha de undo/redo: guarda SO edicoes de bytes (nunca estado de view) ---
   const undoStack = useRef<ByteChange[][]>([]);
   const redoStack = useRef<ByteChange[][]>([]);
   const [histLen, setHistLen] = useState({ u: 0, r: 0 }); // so pra atualizar UI
 
-  const open = useCallback(async (p?: string) => {
-    const file = p ?? (await window.api.openFile());
-    if (!file) return;
-    let bytes: Uint8Array;
-    try {
-      bytes = new Uint8Array(await window.api.readFile(file));
-    } catch {
-      setMsg(`nao consegui abrir: ${file}`);
-      return;
+  // -- abrir .TIM (PSX): decodifica e configura a vista (dimensoes/bpp reais) + CLUT (ITEM 2).
+  // A vista aponta pro bloco de pixels do proprio arquivo (byteOffset = pixelOffset), entao a
+  // EDICAO de pixel escreve in-place nos bytes do TIM e "Salvar" grava um .TIM valido de volta.
+  const loadTim = useCallback((bytes: Uint8Array) => {
+    const tim = decodeTim(bytes); // lanca se nao for TIM valido (ex.: mode "mixed")
+    const tbpp: TileConfig["bpp"] =
+      tim.mode === "4bpp" ? 4 : tim.mode === "8bpp" ? 8 : tim.mode === "16bpp" ? 16 : 24;
+    setCodec("generic"); // TIM = linear/cor-direta generico (nao e formato de console)
+    setMode("linear");
+    setReverse(tim.mode === "4bpp"); // 4bpp do TIM = nibble baixo primeiro (reverse)
+    setBpp(tbpp);
+    setTileW(tim.width);
+    setTileH(tim.height);
+    setCols(1);
+    setTileRows(1);
+    setOffset(tim.pixelOffset);
+    if (tim.clut && (tbpp === 4 || tbpp === 8)) {
+      setTimClut({ clut: tim.clut, clutW: tim.clutW, clutH: tim.clutH });
+      setTimClutIdx(0);
+      setPalette(clutRowToRgba(tim.clut, tim.clutW, 0));
+    } else {
+      setTimClut(null);
+      setPalette(null); // 16/24bpp: cor direta, sem paleta
     }
-    setPath(file);
-    setRaw(bytes);
-    setOffset(0);
-    setDirty(false);
-    setMsg(null);
-    // arquivo novo: zera a historia de edicao
-    undoStack.current = [];
-    redoStack.current = [];
-    setHistLen({ u: 0, r: 0 });
-    // registra nos recentes (alimenta o menu "Abrir recente" e o reabrir-ao-iniciar)
-    window.api.setLastFile(file);
+    setMsg(
+      `TIM ${tim.mode} ${tim.width}×${tim.height}` +
+        (tim.clut ? ` · ${tim.clutH} CLUT(s) de ${tim.clutW} cores` : ""),
+    );
   }, []);
+
+  const open = useCallback(
+    async (p?: string) => {
+      const file = p ?? (await window.api.openFile());
+      if (!file) return;
+      let bytes: Uint8Array;
+      try {
+        bytes = new Uint8Array(await window.api.readFile(file));
+      } catch {
+        setMsg(`nao consegui abrir: ${file}`);
+        return;
+      }
+      setPath(file);
+      setRaw(bytes);
+      setDirty(false);
+      setSelRect(null);
+      // arquivo novo: zera a historia de edicao
+      undoStack.current = [];
+      redoStack.current = [];
+      setHistLen({ u: 0, r: 0 });
+      // registra nos recentes (alimenta o menu "Abrir recente" e o reabrir-ao-iniciar)
+      window.api.setLastFile(file);
+      // .TIM: detecta pela extensao OU pelo header (10 00 00 00). Configura a vista + CLUT.
+      const looksTim =
+        /\.tim$/i.test(file) ||
+        (bytes.length >= 8 && bytes[0] === 0x10 && bytes[1] === 0 && bytes[2] === 0 && bytes[3] === 0);
+      if (looksTim) {
+        try {
+          loadTim(bytes);
+          return;
+        } catch (err) {
+          // TIM invalido: cai pro modo de bytes crus (tile) com um aviso
+          setTimClut(null);
+          setOffset(0);
+          setMsg("TIM invalido (" + (err as Error).message + "); abrindo como bytes crus");
+          return;
+        }
+      }
+      // arquivo comum (nao-TIM): modo tile cru, offset 0, sem CLUT
+      setTimClut(null);
+      setOffset(0);
+      setMsg(null);
+    },
+    [loadTim],
+  );
 
   const onDrop = useCallback(
     (e: DragEvent<HTMLDivElement>) => {
@@ -769,6 +857,43 @@ export function App(): JSX.Element {
     [raw, view, cfg, paintValue, applyBlockAt],
   );
 
+  /** ITEM 4: transforma a regiao selecionada -- espelhar H, espelhar V ou girar 90° (horario).
+   *  Opera nos PIXELS decodificados (tira um snapshot antes de escrever) e regrava pelo mesmo
+   *  caminho do lapis/balde (applyBlockAt = 1 passo de undo byte-level). Girar 90° so em regiao
+   *  quadrada (senao mudaria as dimensoes) -- o botao fica desabilitado quando w != h. */
+  const transformSelection = useCallback(
+    (kind: "flipH" | "flipV" | "rot90") => {
+      if (!raw || !view || !selRect) return;
+      const { x, y, w, h } = selRect;
+      if (kind === "rot90" && w !== h) {
+        setMsg("girar 90° requer selecao quadrada");
+        return;
+      }
+      // snapshot dos valores atuais da regiao (ler durante a escrita pegaria pixels ja mexidos)
+      const src = new Int32Array(w * h);
+      for (let yy = 0; yy < h; yy++)
+        for (let xx = 0; xx < w; xx++) {
+          const loc = locatePixel(cfg, x + xx, y + yy);
+          src[yy * w + xx] = readPixelIndex(raw, cfg, loc.tileBase, loc.px, loc.py);
+        }
+      const val = (xx: number, yy: number): number => {
+        if (kind === "flipH") return src[yy * w + (w - 1 - xx)];
+        if (kind === "flipV") return src[(h - 1 - yy) * w + xx];
+        // rot90 horario (quadrado NxN): dest(xx,yy) = src(sx=yy, sy=N-1-xx)
+        return src[(w - 1 - xx) * w + yy];
+      };
+      const n = applyBlockAt(w, h, x, y, val);
+      setMsg(
+        kind === "flipH"
+          ? `selecao espelhada na horizontal (${n} px)`
+          : kind === "flipV"
+            ? `selecao espelhada na vertical (${n} px)`
+            : `selecao girada 90° (${n} px)`,
+      );
+    },
+    [raw, view, selRect, cfg, applyBlockAt],
+  );
+
   /** Ctrl+V: cola no canto da selecao (ou em 0,0 da vista). Prefere a imagem do clipboard
    *  do sistema (Photoshop etc., com quantizacao pra paleta); senao usa a copia interna. */
   const pasteClipboard = useCallback(async () => {
@@ -833,6 +958,7 @@ export function App(): JSX.Element {
       setDirty(false);
       setSelRect(null);
       setMsg(null);
+      setTimClut(null);
       undoStack.current = [];
       redoStack.current = [];
       setHistLen({ u: 0, r: 0 });
@@ -933,6 +1059,29 @@ export function App(): JSX.Element {
     setMsg(`paleta carregada (${ncolors} cores)`);
   }, [ncolors]);
 
+  /** ITEM 3: importa paleta de .ACT / .PAL (RIFF ou JASC) / .PNG. Ajusta pro nº de cores do
+   *  bpp atual. PNG passa pelo mesmo caminho do PNG (extrai cores unicas); .act/.pal usam os
+   *  parsers de palette.ts (indice = cor, sem dedupe). */
+  const importPalette = useCallback(async () => {
+    const file = await window.api.openPalette();
+    if (!file) return;
+    try {
+      const bytes = new Uint8Array(await window.api.readFile(file));
+      const ext = file.split(".").pop()?.toLowerCase();
+      if (ext === "png") {
+        const { rgba } = await pngToRgba(bytes);
+        setPalette(paletteFromRgba(rgba, ncolors));
+      } else {
+        const dec = decodePaletteFile(file, bytes);
+        setPalette(fitPalette(dec, ncolors));
+      }
+      setSelPal(""); // saiu dos presets de paleta
+      setMsg(`paleta importada de ${file.split(/[\\/]/).pop()} (${ncolors} cores)`);
+    } catch (err) {
+      setMsg("falha ao importar paleta: " + (err as Error).message);
+    }
+  }, [ncolors]);
+
   // exporta a paleta de pintura atual como .ACT (Adobe Color Table) pro Photoshop
   const exportPalette = useCallback(async () => {
     if (!indexed || !effPal) {
@@ -1015,8 +1164,8 @@ export function App(): JSX.Element {
     setMsg(`selecao ${w}x${h}px salva como PNG: ${out.split(/[\\/]/).pop()}`);
   }, [view, selRect, path]);
 
-  const num = (v: number, set: (n: number) => void, min = 0) => (
-    <input type="number" value={v} min={min} onChange={(e) => set(Math.max(min, +e.target.value))} />
+  const num = (v: number, set: (n: number) => void, min = 0, disabled = false) => (
+    <input type="number" value={v} min={min} disabled={disabled} onChange={(e) => set(Math.max(min, +e.target.value))} />
   );
 
   // -- presets de config -------------------------------------------------------
@@ -1029,6 +1178,7 @@ export function App(): JSX.Element {
   // aplica um preset: seta o estado de VIEW inteiro de uma vez. NAO toca undo/redo,
   // nem os bytes da imagem, nem o modo editar/navegar.
   const applyConfigPreset = useCallback((p: ConfigPreset) => {
+    setCodec("generic"); // presets sao configs genericas (bpp/mode); destrava os controles
     setBpp(p.bpp);
     setMode(p.mode);
     setReverse(p.reverse);
@@ -1575,19 +1725,31 @@ export function App(): JSX.Element {
         </div>
 
         <div className="tile">
+          {/* codec por console (ITEM 1): ao escolher um console, bpp e tile 8x8 ficam TRAVADOS
+              (o formato define o intercalamento real dos bits/planos). "generico" = bpp/modo. */}
+          <label>codec
+            <select value={codec} onChange={(e) => applyCodec(e.target.value as ConsoleCodec)}>
+              <option value="generic">generico (bpp/modo)</option>
+              <optgroup label="Consoles (8x8)">
+                {(Object.keys(CONSOLE_CODECS) as Exclude<ConsoleCodec, "generic">[]).map((c) => (
+                  <option key={c} value={c}>{CONSOLE_CODECS[c].label}</option>
+                ))}
+              </optgroup>
+            </select>
+          </label>
           <label>bpp
-            <select value={bpp} onChange={(e) => setBpp(+e.target.value as TileConfig["bpp"])}>
+            <select value={bpp} onChange={(e) => setBpp(+e.target.value as TileConfig["bpp"])} disabled={codecOn} title={codecOn ? "travado pelo codec do console" : undefined}>
               {[1, 2, 4, 8, 16, 24].map((b) => <option key={b} value={b}>{b}</option>)}
             </select>
           </label>
           <label>modo
-            <select value={mode} onChange={(e) => setMode(e.target.value as PixelMode)} disabled={!indexed}>
+            <select value={mode} onChange={(e) => setMode(e.target.value as PixelMode)} disabled={!indexed || codecOn}>
               <option value="planar">planar</option>
               <option value="linear">linear</option>
             </select>
           </label>
-          <label>tile largura{num(tileW, setTileW, 1)}</label>
-          <label>tile altura{num(tileH, setTileH, 1)}</label>
+          <label>tile largura{num(tileW, setTileW, 1, codecOn)}</label>
+          <label>tile altura{num(tileH, setTileH, 1, codecOn)}</label>
           <label>colunas{num(cols, setCols, 1)}</label>
           <label>linhas (tiles){num(tileRows, setTileRows, 1)}</label>
           {/* offset em TEXTO: aceita decimal (6656) e hex (0x1A00/$1A00); Enter/blur aplica */}
@@ -1604,7 +1766,7 @@ export function App(): JSX.Element {
           </label>
           {/* eco do offset atual tambem em hex (pra conferir alinhamento sem converter de cabeca) */}
           <div className="offsethex">offset {offset} ({fmtHex(offset)})</div>
-          {mode === "linear" && indexed && (
+          {mode === "linear" && indexed && !codecOn && (
             <label className="chk"><input type="checkbox" checked={reverse} onChange={(e) => setReverse(e.target.checked)} /> reverse (bits)</label>
           )}
           <label className="chk"><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> grid de tiles</label>
@@ -1686,6 +1848,19 @@ export function App(): JSX.Element {
           >
             Exportar selecao (PNG)
           </button>
+        )}
+        {/* ITEM 4: transformar a selecao (1 passo de undo). Girar 90° so em selecao quadrada. */}
+        {selRect && (
+          <div className="btnrow">
+            <button className="secondary" onClick={() => transformSelection("flipH")} title="espelhar a selecao na horizontal">Espelhar H</button>
+            <button className="secondary" onClick={() => transformSelection("flipV")} title="espelhar a selecao na vertical">Espelhar V</button>
+            <button
+              className="secondary"
+              onClick={() => transformSelection("rot90")}
+              disabled={selRect.w !== selRect.h}
+              title={selRect.w !== selRect.h ? "girar 90° requer selecao quadrada (w = h)" : "girar 90° (horario)"}
+            >Girar 90°</button>
+          </div>
         )}
         <button
           className="secondary"
@@ -1769,10 +1944,34 @@ export function App(): JSX.Element {
               className="hidden-color"
               onChange={(e) => setPalColor(editingIdx.current, e.target.value)}
             />
+            {/* seletor de CLUT: so aparece pra TIM com mais de uma paleta (multi-CLUT) */}
+            {timClut && timClut.clutH > 1 && (
+              <label className="clutsel">
+                CLUT do TIM ({timClut.clutH})
+                <select
+                  value={timClutIdx}
+                  onChange={(e) => {
+                    const row = +e.target.value;
+                    setTimClutIdx(row);
+                    setPalette(clutRowToRgba(timClut.clut, timClut.clutW, row));
+                    setMsg(`CLUT ${row} aplicada`);
+                  }}
+                >
+                  {Array.from({ length: timClut.clutH }, (_, i) => (
+                    <option key={i} value={i}>CLUT {i}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="btnrow">
               <button className="secondary" onClick={loadPalette}>Paleta (PNG)</button>
               {palette && <button className="secondary" onClick={() => setPalette(null)}>Cinza</button>}
             </div>
+            <button
+              className="secondary"
+              onClick={importPalette}
+              title="importa uma paleta de arquivo .ACT (Adobe), .PAL (Microsoft RIFF ou JASC-PAL texto) ou .PNG"
+            >Importar paleta (.act/.pal/.png)</button>
             <button
               className="secondary"
               onClick={exportPalette}
@@ -1856,7 +2055,7 @@ export function App(): JSX.Element {
             <div className="kv"><span>Bytes/linha</span><b>{bytesPerTileRow}</b></div>
             <div className="kv"><span>Canvas</span><b>{view.width}×{view.height}</b></div>
             <div className="kv"><span>Tiles</span><b>{view.tileCount}</b></div>
-            <div className="kv"><span>Tile</span><b>{tileW}×{tileH} {bpp}bpp {indexed ? mode : "direto"}</b></div>
+            <div className="kv"><span>Tile</span><b>{tileW}×{tileH} {bpp}bpp {codecOn ? CONSOLE_CODECS[codec as Exclude<ConsoleCodec, "generic">].label : indexed ? mode : "direto"}</b></div>
           </>
         )}
         <p className="hint">

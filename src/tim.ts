@@ -42,6 +42,8 @@ export interface TimImage {
   raw16?: Uint16Array; // 16bpp: cor original por pixel (preserva bit STP p/ round-trip 100%)
   imgX: number;
   imgY: number;
+  pixelOffset: number; // offset em bytes onde os pixels comecam no arquivo (edicao in-place)
+  rowBytes: number; // bytes por linha no bloco de pixels (imgW*2)
 }
 
 /** 15-bit BGR (1bit STP + 5+5+5) -> [r,g,b,a] 8-bit. Color 0x0000 = fully transparent (PSX convention). */
@@ -141,7 +143,7 @@ export function decodeTim(buf: Uint8Array): TimImage {
     throw new Error("Unsupported TIM mode: " + mode);
   }
 
-  return { mode, hasClut, width, height, rgba, clutX, clutY, clutW, clutH, clut, indices, raw16, imgX, imgY };
+  return { mode, hasClut, width, height, rgba, clutX, clutY, clutW, clutH, clut, indices, raw16, imgX, imgY, pixelOffset: pix, rowBytes: imgW * 2 };
 }
 
 /** Find the palette index whose color is closest to (r,g,b). Exact match wins (faithful round-trip). */
