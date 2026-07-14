@@ -11,7 +11,8 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "test": "tsx --test src/tile.test.ts",
-    "dist": "electron-vite build && electron-builder --win --publish never"
+    "dist": "electron-vite build && electron-builder --win --publish never",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
