@@ -1,25 +1,7 @@
 /// <reference types="vite/client" />
 
+// tipa window.api direto do preload (export type Api = typeof api) -- assim NUNCA fica
+// desatualizado quando a gente adiciona metodo novo no preload
 interface Window {
-  api: {
-    openFile: () => Promise<string | null>;
-    openPng: () => Promise<string | null>;
-    savePng: (def: string) => Promise<string | null>;
-    saveBin: (def: string) => Promise<string | null>;
-    saveAct: (def: string) => Promise<string | null>;
-    setPaletteEnabled: (on: boolean) => Promise<void>;
-    readFile: (p: string) => Promise<Uint8Array>;
-    writeFile: (p: string, data: Uint8Array) => Promise<boolean>;
-    pathForFile: (f: File) => string;
-    setLastFile: (p: string) => Promise<void>;
-    getLastFile: () => Promise<string>;
-    onOpenFile: (cb: (path: string) => void) => () => void;
-    popupMenu: () => Promise<void>;
-    popupMenuItem: (index: number, x: number, buttons?: { index: number; x1: number; x2: number }[]) => Promise<void>;
-    onMenuOpenIndex: (cb: (i: number) => void) => () => void;
-    openWith: (p: string) => Promise<boolean | string>;
-    onOpenPreferences: (cb: () => void) => () => void;
-    onExportPalette: (cb: () => void) => () => void;
-    onMenuSimple: (channel: "menu:closeFile" | "menu:importPng", cb: () => void) => () => void;
-  };
+  api: import("../../preload").Api;
 }

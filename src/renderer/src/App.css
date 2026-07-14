@@ -91,6 +91,10 @@ body::after {
 .tb-menub.open { color: var(--accent); background: var(--accent-dim); }
 /* com popup aberto o :hover congela no botao clicado: neutraliza e deixa so o .open mandar */
 .tb-nav.menuopen .tb-menub:not(.open):hover { color: var(--muted); background: transparent; }
+/* sublinhado da letra do acelerador (Alt) nos botoes de menu da barra */
+.tb-menub u { text-decoration: none; border-bottom: 1px solid currentColor; }
+/* barra de menu ativada pelo Alt: menu em foco pra navegar com as setas (ainda sem abrir) */
+.tb-menub.navfocus { color: var(--accent); background: var(--accent-dim); outline: 1px solid var(--accent); }
 .tb-navsep { width: 1px; height: 16px; background: var(--line-bright); margin: 0 5px; }
 .tb-btn {
   -webkit-app-region: no-drag;
@@ -122,6 +126,58 @@ body::after {
 .tb-app { color: var(--accent); letter-spacing: 1px; text-transform: uppercase; }
 .tb-sep { color: var(--line-bright); }
 .tb-ctx { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* banner de atualizacao (electron-updater): faixa discreta abaixo da barra de titulo */
+.updbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  background: var(--panel2);
+  border-bottom: 1px solid var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  letter-spacing: 0.5px;
+}
+.updbar-txt::before { content: "[ upd ] "; color: var(--accent); }
+.updbar.err { border-bottom-color: var(--amber); }
+.updbar.err .updbar-txt { color: var(--amber); }
+.updbar.err .updbar-txt::before { content: "[ ! ] "; color: var(--amber); }
+.updbar-btn {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  padding: 2px 8px;
+  border-radius: 0;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.updbar-btn:hover { background: var(--accent); color: #04130d; }
+/* barra de progresso do download (preenchimento em % vem inline do estado) */
+.updbar-prog {
+  flex: 0 0 140px;
+  height: 6px;
+  border: 1px solid var(--line-bright);
+  background: var(--bg);
+  overflow: hidden;
+}
+.updbar-prog > span { display: block; height: 100%; background: var(--accent); transition: width 0.2s ease; }
+.updbar-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.updbar-close:hover { color: var(--accent); }
 
 /* janela de Preferencias (modal centralizado): Esc / clique-fora fecha */
 .modal-backdrop {
@@ -179,6 +235,7 @@ body::after {
 .prefswin-foot {
   display: flex;
   justify-content: flex-end;
+  gap: 8px; /* modais com 2 botoes (Cancelar + OK) */
   padding: 10px 14px;
   border-top: 1px solid var(--line);
 }
@@ -537,6 +594,7 @@ label.curswatch input[type="color"] {
 }
 .tile label.chk { justify-content: flex-start; }
 .tile input[type="number"],
+.tile input[type="text"],
 .tile select {
   font-family: var(--mono);
   font-size: 12px;
@@ -547,6 +605,8 @@ label.curswatch input[type="color"] {
   border-radius: 0;
   width: 84px;
 }
+/* eco do offset atual em hex, logo abaixo do campo (ex.: "offset 6656 (0x1A00)") */
+.offsethex { font-size: 10px; color: var(--muted); letter-spacing: 1px; text-align: right; }
 .tile input[type="checkbox"],
 .tiletoggle input[type="checkbox"] { accent-color: var(--accent); }
 
@@ -603,3 +663,42 @@ label.curswatch input[type="color"] {
 .preset-save { display: flex; flex-direction: column; gap: 5px; }
 .preset-actions { display: flex; gap: 6px; }
 .preset-actions button { flex: 1; }
+
+/* rede de seguranca de render (ErrorBoundary) -- em vez de tela preta */
+.errboundary {
+  max-width: 900px; margin: 40px auto; padding: 24px; color: var(--text);
+  font-family: var(--mono, system-ui);
+}
+.errboundary h1 { font-size: 20px; margin: 0 0 8px; }
+.errboundary p { color: var(--muted); margin: 0 0 16px; line-height: 1.5; }
+.errboundary-msg {
+  background: var(--bg); border: 1px solid #ff6b6b; border-radius: 6px; padding: 14px;
+  font-family: var(--mono); font-size: 12px; color: #ffb3b3; white-space: pre-wrap;
+  word-break: break-word; max-height: 50vh; overflow: auto;
+}
+.errboundary-acts { display: flex; gap: 10px; margin-top: 16px; }
+
+/* modais proprios (confirmar / prompt de texto): corpo compacto no padrao .prefswin */
+.confirm-msg { font-size: 12px; color: var(--text); line-height: 1.6; user-select: text; }
+.prompt-input {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line-bright);
+  color: var(--text);
+  caret-color: var(--accent);
+  padding: 7px 9px;
+  border-radius: 0;
+  outline: none;
+  width: 100%;
+}
+.prompt-input:focus { border-color: var(--accent); }
+
+/* modal Sobre */
+.about-logo {
+  font-size: 18px; color: var(--accent); text-transform: uppercase; letter-spacing: 3px;
+  font-weight: 700;
+}
+.about-logo .caret { animation: blink 1.1s step-end infinite; }
+.about-title { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.about-lic { color: var(--muted); font-size: 11px; line-height: 1.6; margin: 0; }

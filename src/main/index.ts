@@ -3,6 +3,11 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { spawn } from "node:child_process";
+// electron-updater e CJS: com o main em ESM o named import quebra ("autoUpdater not
+// found"), entao importamos o default e desestruturamos.
+import electronUpdater from "electron-updater";
+
+const { autoUpdater } = electronUpdater;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -34,6 +39,24 @@ function createWindow(): BrowserWindow {
   const devUrl = process.env["ELECTRON_RENDERER_URL"];
   if (devUrl) win.loadURL(devUrl);
   else win.loadFile(join(__dirname, "../renderer/index.html"));
+  // menu de contexto nos campos editaveis: recortar/copiar/colar (roles nativos, mexem no
+  // clipboard do SO respeitando a selecao); em texto selecionado nao-editavel, so copiar.
+  win.webContents.on("context-menu", (_e, params) => {
+    const { isEditable, editFlags, selectionText } = params;
+    const sel = (selectionText ?? "").trim();
+    if (!isEditable && !sel) return; // so aparece em campo editavel OU quando ha texto selecionado
+    const template: MenuItemConstructorOptions[] = [];
+    if (isEditable) {
+      template.push({ role: "cut", enabled: editFlags.canCut });
+      template.push({ role: "copy", enabled: editFlags.canCopy });
+      template.push({ role: "paste", enabled: editFlags.canPaste });
+      template.push({ type: "separator" });
+      template.push({ role: "selectAll" });
+    } else {
+      template.push({ role: "copy", enabled: editFlags.canCopy });
+    }
+    Menu.buildFromTemplate(template).popup({ window: win });
+  });
   return win;
 }
 
@@ -151,15 +174,19 @@ function buildMenu(): void {
     {
       label: "Ajuda",
       submenu: [
+        // dispara o check de update PELO renderer (pra UI do banner aparecer junto)
+        {
+          label: "Verificar atualizacoes...",
+          click: () =>
+            (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])?.webContents.send("menu:checkUpdates"),
+        },
+        { type: "separator" },
+        // "Sobre" e um modal do renderer (dialog nativo trava o foco no Electron):
+        // o main so avisa e o renderer abre o modal proprio
         {
           label: "Sobre o Tile Studio",
           click: () =>
-            dialog.showMessageBox({
-              type: "info",
-              title: "Tile Studio",
-              message: "Tile Studio",
-              detail: "Editor/visualizador de tiles graficos (estilo Tile Molester). Parte da suite com TIM Studio e LoM Studio.",
-            }),
+            (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])?.webContents.send("menu:about"),
         },
       ],
     },
@@ -186,26 +213,44 @@ ipcMain.handle("menu:popup", (e) => {
 type MenuBtnRect = { index: number; x1: number; x2: number };
 let popupMenu: Menu | null = null; // ref de modulo: o Menu do popup nao pode ser coletado pelo GC
 let menuPoll: ReturnType<typeof setInterval> | null = null;
-let menuSession = 0; // id da abertura atual: o callback de close so limpa se nada reabriu depois
+let menuSession = 0; // id da abertura atual: o callback de close so para o poll se nada reabriu depois
+let menuShownIndex = -1; // qual submenu do topo esta aberto agora (-1 = nenhum). Pro TOGGLE de clique.
+// TOGGLE (reclicar o botao aberto = fechar): quando o popup e dispensado por um clique do usuario
+// no proprio botao, o mesmo clique tambem dispara o onClick -> popupMenuItem. Registramos o instante
+// e o index do dismiss NA HORA (nao com atraso) pra esse popupMenuItem saber que e "o mesmo clique
+// reabrindo" e NAO reabrir. hoverSwitching marca os closePopup programaticos do hover (nao contam).
+let lastDismissAt = 0;
+let lastDismissIndex = -1;
+let hoverSwitching = false;
 
-function openTopMenu(win: BrowserWindow, index: number, x: number): void {
+function openTopMenu(win: BrowserWindow, index: number, xDip: number, yDip: number): void {
   const top = menuTemplate[index];
   if (!top || !Array.isArray(top.submenu)) return;
   popupMenu = Menu.buildFromTemplate(top.submenu as MenuItemConstructorOptions[]);
   const session = ++menuSession;
+  menuShownIndex = index;
+  // avisa o renderer qual botao acender (o hover do CSS nao funciona com o popup capturando o mouse)
   win.webContents.send("menu:openIndex", index);
   popupMenu.popup({
     window: win,
-    x: Math.round(x),
-    y: 34,
+    x: Math.round(xDip),
+    y: Math.round(yDip),
     callback: () => {
-      // fechou de verdade (Esc/clicou item/fora)? para o polling e apaga o highlight
+      // registra o dismiss IMEDIATAMENTE (nao no setTimeout): um clique deliberado pode segurar o
+      // botao > 80ms, entao esperar mataria a deteccao do toggle. Fechamentos do hover-switch nao contam.
+      if (!hoverSwitching) {
+        lastDismissAt = Date.now();
+        lastDismissIndex = index;
+      }
+      hoverSwitching = false;
+      // fechou de verdade (Esc/clicou item/fora)? se ninguem reabriu, para o polling e apaga o highlight
       setTimeout(() => {
         if (session === menuSession) {
           if (menuPoll) {
             clearInterval(menuPoll);
             menuPoll = null;
           }
+          menuShownIndex = -1;
           if (!win.isDestroyed()) win.webContents.send("menu:openIndex", -1);
         }
       }, 80);
@@ -213,33 +258,76 @@ function openTopMenu(win: BrowserWindow, index: number, x: number): void {
   });
 }
 
-ipcMain.handle("menu:popupItem", (e, arg: { index: number; x: number; buttons?: MenuBtnRect[] }) => {
-  const win = BrowserWindow.fromWebContents(e.sender);
-  if (!win) return;
-  const buttons = arg.buttons ?? [];
-  let current = arg.index;
-  openTopMenu(win, current, arg.x);
-  if (menuPoll) clearInterval(menuPoll);
-  if (!buttons.length) return; // sem retangulos nao tem como fazer hover
-  menuPoll = setInterval(() => {
-    if (win.isDestroyed()) {
-      if (menuPoll) clearInterval(menuPoll);
-      menuPoll = null;
+ipcMain.handle(
+  "menu:popupItem",
+  (e, arg: { index: number; x: number; buttons?: MenuBtnRect[]; viewport?: { w: number; h: number } }) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win) return;
+    // TOGGLE: reclicar o botao do menu ABERTO = fechar (nao reabrir). Dois sinais:
+    //  (A) o clique JA dispensou o popup nativo -> o mesmo clique chega aqui logo em seguida
+    //      (lastDismiss recente, mesmo index). Robusto a clique lento (nao depende do 80ms);
+    //  (B) o popup ainda esta aberto neste index (o clique nao dispensou) -> fecha via closePopup.
+    const justClosedSame = Date.now() - lastDismissAt < 350 && lastDismissIndex === arg.index;
+    // CASO A: o proprio clique JA dispensou o popup nativo (dismiss recente, mesmo index). Nao reabre.
+    // NAO reseta lastDismiss NEM mexe no hoverSwitching: um mesmo clique gera 2 popupItem (um eco) --
+    // o eco tambem cai aqui e continua fechado. lastDismiss expira sozinho em 350ms.
+    if (justClosedSame) return;
+    // CASO B: o popup ainda esta aberto neste index (clique nao dispensou) -> fecha de fato.
+    if (menuShownIndex === arg.index) {
+      hoverSwitching = true; // o closePopup abaixo (popup aberto) fecha e dispara o callback -> reseta o flag
+      popupMenu?.closePopup(win);
+      menuShownIndex = -1;
+      lastDismissAt = Date.now(); // marca o fechamento pra o eco deste clique tambem cair no caso A
+      lastDismissIndex = arg.index;
+      if (menuPoll) {
+        clearInterval(menuPoll);
+        menuPoll = null;
+      }
+      if (!win.isDestroyed()) win.webContents.send("menu:openIndex", -1);
       return;
     }
-    const pt = screen.getCursorScreenPoint();
-    const cb = win.getContentBounds();
-    const x = pt.x - cb.x;
-    const y = pt.y - cb.y;
-    if (y < 0 || y >= 34) return; // so vale na faixa da barra de titulo
-    const hit = buttons.find((b) => x >= b.x1 && x < b.x2);
-    if (hit && hit.index !== current) {
-      current = hit.index;
-      popupMenu?.closePopup(win);
-      openTopMenu(win, current, hit.x1);
-    }
-  }, 60);
-});
+    const buttons = arg.buttons ?? [];
+    // os retangulos dos botoes vem em CSS px; o cursor (getCursorScreenPoint) e o contentBounds vem
+    // em DIP. Com zoom/DPI, CSS != DIP -> o erro CRESCIA com a distancia do botao. sx/sy = razao
+    // CSS/DIP (viewport / contentBounds); converto o cursor DIP->CSS (pra detectar o botao) e as
+    // posicoes CSS->DIP (pra posicionar o popup). Sem viewport (fallback) assume 1:1.
+    const cb0 = win.getContentBounds();
+    const sx = arg.viewport && cb0.width ? arg.viewport.w / cb0.width : 1; // CSS px por DIP (X)
+    const sy = arg.viewport && cb0.height ? arg.viewport.h / cb0.height : 1;
+    const yDip = 34 / sy; // a barra tem 34 CSS px -> DIP
+    let current = arg.index;
+    openTopMenu(win, current, arg.x / sx, yDip);
+    if (menuPoll) clearInterval(menuPoll);
+    if (!buttons.length) return; // sem retangulos nao tem como fazer hover
+    menuPoll = setInterval(() => {
+      if (win.isDestroyed()) {
+        if (menuPoll) clearInterval(menuPoll);
+        menuPoll = null;
+        return;
+      }
+      const pt = screen.getCursorScreenPoint();
+      const cb = win.getContentBounds();
+      const x = (pt.x - cb.x) * sx; // cursor em CSS px (mesma unidade dos retangulos)
+      const y = (pt.y - cb.y) * sy;
+      if (y < 0 || y >= 34) return; // so vale na faixa da barra de titulo (34 CSS px)
+      const hit = buttons.find((b) => x >= b.x1 && x < b.x2);
+      if (hit && hit.index !== current) {
+        current = hit.index;
+        hoverSwitching = true; // fechamento programatico do hover: nao conta como dismiss (toggle)
+        popupMenu?.closePopup(win);
+        openTopMenu(win, current, hit.x1 / sx, yDip); // hit.x1 CSS -> DIP
+      }
+    }, 60);
+  },
+);
+
+// infos pro modal Sobre (versao do package.json empacotado + runtimes)
+ipcMain.handle("app:info", () => ({
+  version: app.getVersion(),
+  electron: process.versions.electron,
+  chrome: process.versions.chrome,
+  node: process.versions.node,
+}));
 
 // abre o dialogo nativo "Abrir com..." do Windows (escolher o programa); fallback pro padrao
 function openWith(p: string): boolean | Promise<string> {
@@ -302,6 +390,72 @@ ipcMain.handle("file:setLast", (_e, p: string) => addRecent(p));
 ipcMain.handle("file:getLast", () => {
   const last = readRecents().last;
   return last && existsSync(last) ? last : ""; // so reabre se ainda existir
+});
+
+// --- auto-update (electron-updater) ------------------------------------------
+// O usuario decide baixar/instalar: autoDownload fica DESLIGADO e o renderer mostra
+// um banner conforme o status. Feed: GitHub Releases (bloco "publish" do package.json).
+// Tudo em try/catch: repo/release inexistente NAO pode derrubar o app.
+autoUpdater.autoDownload = false;
+
+// TESTE LOCAL do auto-update: com a env var UPDATE_FEED_URL setada (ex. http://localhost:8765),
+// o feed vira um servidor "generic" local em vez do GitHub -- da pra ensaiar o fluxo inteiro
+// (detectar -> baixar -> reinstalar) servindo a pasta release/ com qualquer servidor estatico.
+// So faz sentido no app empacotado (em dev o check responde "dev" sem tocar no feed).
+if (app.isPackaged && process.env.UPDATE_FEED_URL) {
+  autoUpdater.setFeedURL({ provider: "generic", url: process.env.UPDATE_FEED_URL });
+}
+
+type UpdState = "checking" | "available" | "none" | "downloading" | "downloaded" | "error" | "dev";
+type UpdStatus = { state: UpdState; version?: string; percent?: number; error?: string };
+
+// mensagem de erro CURTA pro banner (1a linha, sem stack)
+const shortErr = (e: unknown): string =>
+  String((e as Error)?.message ?? e).split("\n")[0].slice(0, 160);
+
+// manda o status pra todas as janelas (o banner vive no renderer)
+function sendUpdStatus(s: UpdStatus): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send("upd:status", s);
+  }
+}
+
+autoUpdater.on("checking-for-update", () => sendUpdStatus({ state: "checking" }));
+autoUpdater.on("update-available", (info) => sendUpdStatus({ state: "available", version: info.version }));
+autoUpdater.on("update-not-available", () => sendUpdStatus({ state: "none" }));
+autoUpdater.on("download-progress", (p) =>
+  sendUpdStatus({ state: "downloading", percent: Math.round(p.percent) }),
+);
+autoUpdater.on("update-downloaded", (info) => sendUpdStatus({ state: "downloaded", version: info.version }));
+autoUpdater.on("error", (e) => sendUpdStatus({ state: "error", error: shortErr(e) }));
+
+// check: em dev (nao empacotado) responde "dev" -- a UI avisa que so funciona instalado
+ipcMain.handle("upd:check", async () => {
+  if (!app.isPackaged) {
+    sendUpdStatus({ state: "dev" });
+    return;
+  }
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (e) {
+    sendUpdStatus({ state: "error", error: shortErr(e) }); // o evento "error" pode nao cobrir tudo
+  }
+});
+ipcMain.handle("upd:download", async () => {
+  if (!app.isPackaged) return;
+  try {
+    await autoUpdater.downloadUpdate();
+  } catch (e) {
+    sendUpdStatus({ state: "error", error: shortErr(e) });
+  }
+});
+ipcMain.handle("upd:install", () => {
+  if (!app.isPackaged) return;
+  try {
+    autoUpdater.quitAndInstall();
+  } catch (e) {
+    sendUpdStatus({ state: "error", error: shortErr(e) });
+  }
 });
 
 app.whenReady().then(() => {

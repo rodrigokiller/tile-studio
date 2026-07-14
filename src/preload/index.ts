@@ -1,5 +1,13 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 
+// status do auto-update (main -> renderer via "upd:status"); "dev" = rodando sem empacotar
+export type UpdStatus = {
+  state: "checking" | "available" | "none" | "downloading" | "downloaded" | "error" | "dev";
+  version?: string;
+  percent?: number;
+  error?: string;
+};
+
 const api = {
   openFile: (): Promise<string | null> => ipcRenderer.invoke("dialog:openFile"),
   openPng: (): Promise<string | null> => ipcRenderer.invoke("dialog:openPng"),
@@ -23,9 +31,14 @@ const api = {
   },
   // barra de titulo custom: abre o menu do app como popup, ou o submenu de um item do topo
   popupMenu: (): Promise<void> => ipcRenderer.invoke("menu:popup"),
-  // buttons = retangulos de todos os botoes (hover-switch estilo Windows, feito no main)
-  popupMenuItem: (index: number, x: number, buttons?: { index: number; x1: number; x2: number }[]): Promise<void> =>
-    ipcRenderer.invoke("menu:popupItem", { index, x, buttons }),
+  // buttons = retangulos de todos os botoes (hover-switch estilo Windows, feito no main);
+  // viewport = tamanho da janela em CSS px (o main converte CSS<->DIP pro popup cair certo com zoom/DPI)
+  popupMenuItem: (
+    index: number,
+    x: number,
+    buttons?: { index: number; x1: number; x2: number }[],
+    viewport?: { w: number; h: number },
+  ): Promise<void> => ipcRenderer.invoke("menu:popupItem", { index, x, buttons, viewport }),
   // indice do menu aberto na barra (-1 = fechou): acende o botao certo durante o hover-switch
   onMenuOpenIndex: (cb: (i: number) => void): (() => void) => {
     const handler = (_e: IpcRendererEvent, i: number): void => cb(i);
@@ -46,11 +59,27 @@ const api = {
     ipcRenderer.on("menu:exportPalette", handler);
     return () => ipcRenderer.removeListener("menu:exportPalette", handler);
   },
-  // Arquivo > Fechar arquivo / Importar PNG
-  onMenuSimple: (channel: "menu:closeFile" | "menu:importPng", cb: () => void): (() => void) => {
+  // Arquivo > Fechar arquivo / Importar PNG; Ajuda > Sobre / Verificar atualizacoes
+  onMenuSimple: (
+    channel: "menu:closeFile" | "menu:importPng" | "menu:about" | "menu:checkUpdates",
+    cb: () => void,
+  ): (() => void) => {
     const handler = (): void => cb();
     ipcRenderer.on(channel, handler);
     return () => ipcRenderer.removeListener(channel, handler);
+  },
+  // infos pro modal Sobre (versao + runtimes)
+  appInfo: (): Promise<{ version: string; electron: string; chrome: string; node: string }> =>
+    ipcRenderer.invoke("app:info"),
+  // --- auto-update ------------------------------------------------------------
+  updCheck: (): Promise<void> => ipcRenderer.invoke("upd:check"),
+  updDownload: (): Promise<void> => ipcRenderer.invoke("upd:download"),
+  updInstall: (): Promise<void> => ipcRenderer.invoke("upd:install"),
+  // stream de status do updater (checking/available/none/downloading/downloaded/error/dev)
+  onUpdStatus: (cb: (s: UpdStatus) => void): (() => void) => {
+    const h = (_e: IpcRendererEvent, s: UpdStatus): void => cb(s);
+    ipcRenderer.on("upd:status", h);
+    return () => ipcRenderer.removeListener("upd:status", h);
   },
 };
 

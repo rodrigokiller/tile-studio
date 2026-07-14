@@ -4,14 +4,17 @@
   "description": "Editor/visualizador de tiles graficos de consoles antigos (estilo Tile Molester), moderno em TypeScript + Electron. Parte do suite com o TIM Studio.",
   "type": "module",
   "license": "MIT",
+  "author": "Rodrigo Sanguanini (Killer) <rodrigokiller@gmail.com>",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
-    "test": "tsx --test src/tile.test.ts"
+    "test": "tsx --test src/tile.test.ts",
+    "dist": "electron-vite build && electron-builder --win --publish never"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "pngjs": "^7.0.0"
   },
   "devDependencies": {
@@ -21,11 +24,42 @@
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.1",
     "electron": "^30.0.0",
+    "electron-builder": "^24.13.3",
     "electron-vite": "^2.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "tsx": "^4.7.1",
     "typescript": "^5.4.0",
     "vite": "^5.1.0"
+  },
+  "build": {
+    "appId": "com.rodrigokiller.tilestudio",
+    "productName": "Tile Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "rodrigokiller",
+        "repo": "tile-studio"
+      }
+    ]
   }
 }

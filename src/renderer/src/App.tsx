@@ -22,6 +22,7 @@ import {
   type ConfigPreset,
   type PalettePreset,
 } from "./presets";
+import type { UpdStatus } from "../../preload"; // status do auto-update (so o tipo)
 
 // teto do historico de undo (descarta as entradas mais antigas ao passar)
 const MAX_UNDO = 200;
@@ -76,12 +77,50 @@ const rgbaToHex = (p: Uint8Array, i: number): string =>
 // Um "stroke" (do mousedown ao mouseup) agrupa varias dessas mudancas.
 type ByteChange = { off: number; old: number; neu: number };
 
+// menus da barra de titulo + a letra do acelerador (Alt+letra), padrao Windows. A ordem casa com
+// menuTemplate no main (o index e o mesmo). Letras distintas: Arquivo=A, Editar=E, eXibir=X,
+// Janela=J, ajuDa=D.
+const TB_MENUS: { label: string; alt: string }[] = [
+  { label: "Arquivo", alt: "a" },
+  { label: "Editar", alt: "e" },
+  { label: "Exibir", alt: "x" },
+  { label: "Janela", alt: "j" },
+  { label: "Ajuda", alt: "d" },
+];
+
+// offset digitado pelo usuario: aceita hex com prefixo ("0x1A00" / "$1A00") ou sufixo ("1A00h"),
+// e decimal puro ("6656"). Sem prefixo: decimal por padrao; com hexDefault=true (ir-para, Ctrl+G)
+// ou quando tem letra a-f, interpreta como hex. Retorna null se nao der pra entender.
+function parseOffsetText(s: string, hexDefault = false): number | null {
+  const t = s.trim().toLowerCase();
+  if (!t) return null;
+  const m = /^(?:0x|\$)([0-9a-f]+)$/.exec(t) ?? /^([0-9a-f]+)h$/.exec(t);
+  if (m) return parseInt(m[1], 16);
+  if (/^[0-9a-f]+$/.test(t)) {
+    if (hexDefault || /[a-f]/.test(t)) return parseInt(t, 16);
+    return parseInt(t, 10);
+  }
+  return null;
+}
+
+const fmtHex = (n: number): string => "0x" + n.toString(16).toUpperCase();
+
 // -----------------------------------------------------------------------------
 
 export function App(): JSX.Element {
   // botao da barra de titulo cujo menu esta aberto (highlight do hover-switch; -1 = nenhum)
   const [openMenuIdx, setOpenMenuIdx] = useState(-1);
   useEffect(() => window.api.onMenuOpenIndex((i) => setOpenMenuIdx(i)), []);
+  // navegacao do menu por Alt (padrao Windows)
+  const [altHeld, setAltHeld] = useState(false); // Alt segurado -> sublinha as letras dos menus
+  const [menuNavIdx, setMenuNavIdx] = useState<number | null>(null); // barra ativada por Alt: menu em foco (setas), sem abrir
+  const navReturnRef = useRef<number | null>(null); // menu aberto PELO teclado -> pra onde voltar quando fechar (Esc volta pra barra)
+  const prevOpenMenuRef = useRef(-1); // openMenuIdx anterior (detectar a transicao aberto -> fechado)
+  // modais proprios (confirm/prompt/Sobre): os dialogs nativos travam o foco da janela no Electron
+  const [confirmState, setConfirmState] = useState<{ msg: string; okLabel?: string; onOk: () => void } | null>(null);
+  const [promptState, setPromptState] = useState<{ title: string; hint?: string; value: string; onOk: (v: string) => void } | null>(null);
+  const [showAbout, setShowAbout] = useState(false);
+  const [appInfo, setAppInfo] = useState<{ version: string; electron: string; chrome: string; node: string } | null>(null);
   const [path, setPath] = useState<string | null>(null);
   const [raw, setRaw] = useState<Uint8Array | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -111,9 +150,14 @@ export function App(): JSX.Element {
   const [initialTool, setInitialTool] = useState<"edit" | "pan">(
     () => (localStorage.getItem("tilestudio:initialTool") === "pan" ? "pan" : "edit"),
   );
+  // banner de atualizacao (null = escondido) + pref "verificar ao iniciar" (default LIGADO)
+  const [upd, setUpd] = useState<UpdStatus | null>(null);
+  const [updOnBoot, setUpdOnBoot] = useState(() => localStorage.getItem("tilestudio:updOnBoot") !== "0");
+  // check silencioso (boot): so vira banner se HOUVER update; checking/none/erro nao incomodam
+  const updSilent = useRef(false);
 
-  // ferramenta ativa: editar (pinta) ou navegar (pan). Espaco/Ctrl = pan temporario.
-  const [tool, setTool] = useState<"edit" | "pan" | "select">(initialTool);
+  // ferramenta ativa: editar (pinta), navegar (pan), selecionar ou balde. Espaco = pan temporario.
+  const [tool, setTool] = useState<"edit" | "pan" | "select" | "fill">(initialTool);
   const [tempPan, setTempPan] = useState(false);
   // selecao retangular (px do canvas) pra copiar/colar; Esc limpa
   const [selRect, setSelRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -220,6 +264,43 @@ export function App(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // -- auto-update: status do main vira banner; no modo silencioso so "available" promove
+  useEffect(
+    () =>
+      window.api.onUpdStatus((s) => {
+        if (updSilent.current) {
+          if (s.state === "available") {
+            updSilent.current = false; // achou update: daqui em diante o banner acompanha tudo
+          } else {
+            if (s.state !== "checking") updSilent.current = false; // terminou sem novidade
+            return;
+          }
+        }
+        // download-progress nao manda a versao: preserva a do status anterior
+        setUpd((prev) => ({ ...s, version: s.version ?? prev?.version }));
+      }),
+    [],
+  );
+
+  // dispara um check; silent = check automatico do boot (banner so aparece com update)
+  const checkUpdates = useCallback((silent: boolean) => {
+    updSilent.current = silent;
+    if (!silent) setUpd({ state: "checking" });
+    void window.api.updCheck();
+  }, []);
+
+  // menu Ajuda > Verificar atualizacoes... (check manual, com banner)
+  useEffect(() => window.api.onMenuSimple("menu:checkUpdates", () => checkUpdates(false)), [checkUpdates]);
+
+  // pref ligada: check silencioso ~10s depois do boot (nao atrapalha a abertura)
+  useEffect(() => {
+    if (!updOnBoot) return;
+    const t = setTimeout(() => checkUpdates(true), 10_000);
+    return () => clearTimeout(t);
+    // so na montagem (o valor da pref no boot decide); checkUpdates e estavel
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const view = useMemo(() => {
     if (!raw) return null;
     try {
@@ -270,6 +351,37 @@ export function App(): JSX.Element {
   const bytesPerTileRow = bytesPerTile * Math.max(1, cols);
   const step = (mult: number) => setOffset((o) => Math.max(0, o + bytesPerTileRow * mult));
 
+  // o input de offset e TEXTO (aceita decimal "6656" e hex "0x1A00"/"$1A00"); so aplica no
+  // Enter/blur (digitar "0x" pela metade nao zera a vista). Sincroniza quando muda por fora.
+  const [offsetText, setOffsetText] = useState("0");
+  useEffect(() => setOffsetText(String(offset)), [offset]);
+  const commitOffsetText = useCallback(() => {
+    const v = parseOffsetText(offsetText);
+    if (v === null) {
+      setOffsetText(String(offset)); // invalido: volta pro valor atual
+      return;
+    }
+    setOffset(Math.max(0, v));
+    setOffsetText(String(Math.max(0, v))); // normaliza mesmo se o offset nao mudou (o effect nao roda)
+  }, [offsetText, offset]);
+
+  // Ctrl+G: modal "ir para offset" -- digita em hex (padrao) ou decimal e vai
+  const gotoOffset = useCallback(() => {
+    setPromptState({
+      title: "Ir para offset",
+      hint: "em HEX: 1A00 = 0x1A00 (prefixo 0x/$ opcional). O campo de offset da sidebar aceita decimal.",
+      value: fmtHex(offset),
+      onOk: (v) => {
+        const n = parseOffsetText(v, true); // sem prefixo = hex (e o modal de "ir para em hex")
+        if (n === null) {
+          setMsg("offset invalido: " + v);
+          return;
+        }
+        setOffset(Math.max(0, n));
+      },
+    });
+  }, [offset]);
+
   // -- undo/redo: aplica um conjunto de mudancas de bytes ----------------------
   const applyChanges = useCallback((changes: ByteChange[], useOld: boolean) => {
     setRaw((cur) => {
@@ -306,6 +418,13 @@ export function App(): JSX.Element {
       const tag = (e.target as HTMLElement)?.tagName;
       const inField = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
 
+      // Ctrl+G: ir para offset (modal em hex); funciona mesmo com o foco num campo
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "g") {
+        e.preventDefault();
+        gotoOffset();
+        return;
+      }
+
       // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z -> undo/redo de EDICAO (nunca de view)
       if ((e.ctrlKey || e.metaKey) && !inField) {
         const k = e.key.toLowerCase();
@@ -318,10 +437,13 @@ export function App(): JSX.Element {
       else if (e.key === "ArrowUp") { e.preventDefault(); step(-1); }
       else if (e.key === "PageDown") { e.preventDefault(); step(tileRows); }
       else if (e.key === "PageUp") { e.preventDefault(); step(-tileRows); }
+      // nudge FINO: +-1 byte no offset (essencial pra achar o alinhamento dos tiles)
+      else if (e.key === "ArrowLeft" && e.shiftKey) { e.preventDefault(); setOffset((o) => Math.max(0, o - 1)); }
+      else if (e.key === "ArrowRight" && e.shiftKey) { e.preventDefault(); setOffset((o) => o + 1); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [bytesPerTileRow, tileRows, undo, redo]);
+  }, [bytesPerTileRow, tileRows, undo, redo, gotoOffset]);
 
   // Espaco (segurar) = pan temporario enquanto o foco nao esta num campo.
   useEffect(() => {
@@ -419,6 +541,12 @@ export function App(): JSX.Element {
     if (e.altKey) {
       e.preventDefault();
       pickAt(e.clientX, e.clientY);
+      return;
+    }
+    // ferramenta Balde: 1 clique preenche a area contigua (flood fill); 1 clique = 1 undo
+    if (tool === "fill" && !tempPan) {
+      e.preventDefault();
+      fillAt(e.clientX, e.clientY);
       return;
     }
     // ferramenta Selecionar: arrasta um retangulo (px) pra copiar/colar
@@ -591,6 +719,56 @@ export function App(): JSX.Element {
     [applyBlockAt, indexed, effPal, ncolors, bpp],
   );
 
+  /** ferramenta BALDE: flood fill 4-direcoes a partir do clique, com a cor de pintura atual.
+   *  Anda so por pixels da MESMA cor do pixel clicado e nao sai da vista atual (canvas
+   *  decodificado). A gravacao passa pelo applyBlockAt -> vira UMA entrada de undo byte-level,
+   *  o mesmo caminho do lapis/colar. */
+  const fillAt = useCallback(
+    (clientX: number, clientY: number) => {
+      const cv = canvasRef.current;
+      if (!cv || !raw || !view) return;
+      const p = cvXY(cv, clientX, clientY);
+      const seed = locatePixel(cfg, p.x, p.y);
+      const target = readPixelIndex(raw, cfg, seed.tileBase, seed.px, seed.py);
+      if (target === paintValue) return; // ja e a cor de pintura, nada a fazer
+      const W = view.width;
+      const H = view.height;
+      // 1) marca a regiao contigua (SO leitura) com um flood fill iterativo 4-direcoes
+      const mask = new Uint8Array(W * H);
+      const stack: number[] = [p.y * W + p.x];
+      mask[p.y * W + p.x] = 1;
+      let minX = p.x, maxX = p.x, minY = p.y, maxY = p.y;
+      const tryPush = (nx: number, ny: number): void => {
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) return; // limitado a vista atual
+        const ni = ny * W + nx;
+        if (mask[ni]) return;
+        const loc = locatePixel(cfg, nx, ny);
+        if (readPixelIndex(raw, cfg, loc.tileBase, loc.px, loc.py) !== target) return;
+        mask[ni] = 1;
+        stack.push(ni);
+      };
+      while (stack.length) {
+        const i = stack.pop()!;
+        const x = i % W;
+        const y = (i / W) | 0;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        tryPush(x - 1, y);
+        tryPush(x + 1, y);
+        tryPush(x, y - 1);
+        tryPush(x, y + 1);
+      }
+      // 2) grava a regiao como UMA entrada de undo (mesmo caminho do colar/importar PNG)
+      const n = applyBlockAt(maxX - minX + 1, maxY - minY + 1, minX, minY, (xx, yy) =>
+        mask[(minY + yy) * W + (minX + xx)] ? paintValue : null,
+      );
+      setMsg(`balde: ${n} px preenchidos`);
+    },
+    [raw, view, cfg, paintValue, applyBlockAt],
+  );
+
   /** Ctrl+V: cola no canto da selecao (ou em 0,0 da vista). Prefere a imagem do clipboard
    *  do sistema (Photoshop etc., com quantizacao pra paleta); senao usa a copia interna. */
   const pasteClipboard = useCallback(async () => {
@@ -645,22 +823,55 @@ export function App(): JSX.Element {
     }
   }, [raw, view, applyRgbaAt, indexed]);
 
-  /** Arquivo > Fechar arquivo (Ctrl+W): volta pra tela vazia. */
+  /** Arquivo > Fechar arquivo (Ctrl+W): volta pra tela vazia. Com alteracoes nao salvas,
+   *  confirma num modal PROPRIO (window.confirm nativo trava o foco da janela no Electron). */
   const closeFile = useCallback(() => {
     if (!raw) return;
-    if (dirty && !window.confirm("O arquivo tem alteracoes nao salvas. Fechar mesmo assim?")) return;
-    setPath(null);
-    setRaw(null);
-    setDirty(false);
-    setSelRect(null);
-    setMsg(null);
-    undoStack.current = [];
-    redoStack.current = [];
-    setHistLen({ u: 0, r: 0 });
+    const doClose = (): void => {
+      setPath(null);
+      setRaw(null);
+      setDirty(false);
+      setSelRect(null);
+      setMsg(null);
+      undoStack.current = [];
+      redoStack.current = [];
+      setHistLen({ u: 0, r: 0 });
+    };
+    if (dirty) {
+      setConfirmState({
+        msg: "O arquivo tem alteracoes nao salvas. Fechar mesmo assim?",
+        okLabel: "Fechar mesmo assim",
+        onOk: doClose,
+      });
+      return;
+    }
+    doClose();
   }, [raw, dirty]);
 
   useEffect(() => window.api.onMenuSimple("menu:closeFile", () => closeFile()), [closeFile]);
   useEffect(() => window.api.onMenuSimple("menu:importPng", () => void importPng()), [importPng]);
+  // Ajuda > Sobre: o main so manda o IPC e o modal abre AQUI (dialog nativo trava o foco)
+  useEffect(() => window.api.onMenuSimple("menu:about", () => setShowAbout(true)), []);
+  // infos de versao pro Sobre: busca 1x ao montar
+  useEffect(() => {
+    void window.api.appInfo().then(setAppInfo);
+  }, []);
+
+  // Esc fecha os modais proprios (confirmar / prompt / Sobre). Listener em CAPTURE pra ganhar
+  // do Esc que limpa a selecao (o evento nem chega nos handlers de bolha).
+  useEffect(() => {
+    if (!confirmState && !promptState && !showAbout) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setConfirmState(null);
+        setPromptState(null);
+        setShowAbout(false);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [confirmState, promptState, showAbout]);
 
   // Ctrl+C copia a selecao / Ctrl+V cola / Esc limpa a selecao
   useEffect(() => {
@@ -780,6 +991,30 @@ export function App(): JSX.Element {
     setMsg(`PNG salvo: ${out.split(/[\\/]/).pop()}`);
   }, [view, path]);
 
+  /** exporta SO a selecao retangular como PNG (mesmo caminho do exportPng, recortado). */
+  const exportSelPng = useCallback(async () => {
+    if (!view || !selRect) return;
+    const { x, y, w, h } = selRect;
+    const cv = document.createElement("canvas");
+    cv.width = w;
+    cv.height = h;
+    const cx = cv.getContext("2d")!;
+    // copia linha a linha o retangulo da vista decodificada (mesma tecnica do copySelection)
+    const region = cx.createImageData(w, h);
+    for (let yy = 0; yy < h; yy++) {
+      const src = ((y + yy) * view.width + x) * 4;
+      region.data.set(view.rgba.subarray(src, src + w * 4), yy * w * 4);
+    }
+    cx.putImageData(region, 0, 0);
+    const blob = await new Promise<Blob | null>((r) => cv.toBlob(r, "image/png"));
+    if (!blob) return;
+    const def = (path?.replace(/\.[^.\\/]+$/, "") ?? "tiles") + `_sel_${w}x${h}.png`;
+    const out = await window.api.savePng(def.split(/[\\/]/).pop() ?? "selecao.png");
+    if (!out) return;
+    await window.api.writeFile(out, new Uint8Array(await blob.arrayBuffer()));
+    setMsg(`selecao ${w}x${h}px salva como PNG: ${out.split(/[\\/]/).pop()}`);
+  }, [view, selRect, path]);
+
   const num = (v: number, set: (n: number) => void, min = 0) => (
     <input type="number" value={v} min={min} onChange={(e) => set(Math.max(min, +e.target.value))} />
   );
@@ -835,20 +1070,26 @@ export function App(): JSX.Element {
     setMsg(`preset excluido: ${name}`);
   }, []);
 
+  // renomear via modal proprio (window.prompt nativo trava o foco da janela no Electron)
   const renameConfigPreset = useCallback((oldName: string) => {
-    const nn = window.prompt("Novo nome do preset:", oldName);
-    const name = nn?.trim();
-    if (!name || name === oldName) return;
-    if (BUILTIN_CONFIG_PRESETS.some((b) => b.name === name) || customCfgs.some((x) => x.name === name)) {
-      setMsg("ja existe um preset com esse nome");
-      return;
-    }
-    setCustomCfgs((prev) => {
-      const next = prev.map((x) => (x.name === oldName ? { ...x, name } : x));
-      saveCustomConfigs(next);
-      return next;
+    setPromptState({
+      title: "Renomear preset",
+      value: oldName,
+      onOk: (nn) => {
+        const name = nn.trim();
+        if (!name || name === oldName) return;
+        if (BUILTIN_CONFIG_PRESETS.some((b) => b.name === name) || customCfgs.some((x) => x.name === name)) {
+          setMsg("ja existe um preset com esse nome");
+          return;
+        }
+        setCustomCfgs((prev) => {
+          const next = prev.map((x) => (x.name === oldName ? { ...x, name } : x));
+          saveCustomConfigs(next);
+          return next;
+        });
+        setSelCfg((s) => (s === oldName ? name : s));
+      },
     });
-    setSelCfg((s) => (s === oldName ? name : s));
   }, [customCfgs]);
 
   // -- presets de paleta -------------------------------------------------------
@@ -901,21 +1142,169 @@ export function App(): JSX.Element {
     setMsg(`paleta excluida: ${name}`);
   }, []);
 
+  // renomear via modal proprio (mesmo motivo do renameConfigPreset)
   const renamePalettePreset = useCallback((oldName: string) => {
-    const nn = window.prompt("Novo nome da paleta:", oldName);
-    const name = nn?.trim();
-    if (!name || name === oldName) return;
-    if (BUILTIN_PALETTE_PRESETS.some((b) => b.name === name) || customPals.some((x) => x.name === name)) {
-      setMsg("ja existe uma paleta com esse nome");
-      return;
-    }
-    setCustomPals((prev) => {
-      const next = prev.map((x) => (x.name === oldName ? { ...x, name } : x));
-      saveCustomPalettes(next);
-      return next;
+    setPromptState({
+      title: "Renomear paleta",
+      value: oldName,
+      onOk: (nn) => {
+        const name = nn.trim();
+        if (!name || name === oldName) return;
+        if (BUILTIN_PALETTE_PRESETS.some((b) => b.name === name) || customPals.some((x) => x.name === name)) {
+          setMsg("ja existe uma paleta com esse nome");
+          return;
+        }
+        setCustomPals((prev) => {
+          const next = prev.map((x) => (x.name === oldName ? { ...x, name } : x));
+          saveCustomPalettes(next);
+          return next;
+        });
+        setSelPal((s) => (s === oldName ? name : s));
+      },
     });
-    setSelPal((s) => (s === oldName ? name : s));
   }, [customPals]);
+
+  // -- barra de menu: abrir por clique OU teclado (Alt) -------------------------
+
+  // abre o submenu do topo `index` PROGRAMATICAMENTE (mesmo caminho do clique no botao): mede os
+  // retangulos dos botoes + viewport e chama o popupMenuItem. Usado pelo clique E pelo Alt.
+  const openTitlebarMenu = useCallback((index: number, fromNav = false) => {
+    // se veio da barra ativada por teclado, lembra pra onde VOLTAR quando o popup fechar por Esc
+    navReturnRef.current = fromNav ? index : null;
+    setMenuNavIdx(null); // abrir um menu encerra a navegacao-por-setas da barra
+    const btns = [...document.querySelectorAll<HTMLButtonElement>(".tb-nav button.tb-menub")];
+    const btn = btns[index];
+    if (!btn) return;
+    btn.blur();
+    const rects = btns.map((b, j) => {
+      const r = b.getBoundingClientRect();
+      return { index: j, x1: r.left, x2: r.right };
+    });
+    void window.api.popupMenuItem(index, btn.getBoundingClientRect().left, rects, {
+      w: window.innerWidth,
+      h: window.innerHeight,
+    });
+  }, []);
+
+  // navegacao por Alt (padrao Windows): Alt+letra abre o menu; Alt sozinho (tap) ativa a barra;
+  // segurar Alt sublinha as letras. Uma vez o popup NATIVO aberto, ele captura o teclado
+  // (setas/Enter/Esc navegam nativamente).
+  useEffect(() => {
+    let altTap = false; // Alt esta sendo segurado sozinho (candidato a tap)
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === "Alt" && !e.ctrlKey && !e.shiftKey) {
+        e.preventDefault(); // evita o foco/beep do menu nativo do Windows
+        if (!e.repeat) {
+          altTap = true;
+          setAltHeld(true);
+        }
+        return;
+      }
+      // qualquer outra tecla ja NAO e um "tap" de Alt sozinho (ex.: Alt+clique do conta-gotas)
+      altTap = false;
+      // Alt+letra (sem Ctrl -> nao pega AltGr/acentos): abre o menu correspondente
+      if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key.length === 1) {
+        const idx = TB_MENUS.findIndex((m) => m.alt === e.key.toLowerCase());
+        if (idx >= 0) {
+          e.preventDefault();
+          setAltHeld(false);
+          openTitlebarMenu(idx);
+        }
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent): void => {
+      if (e.key === "Alt") {
+        setAltHeld(false);
+        if (altTap) {
+          altTap = false;
+          e.preventDefault();
+          // tap do Alt: ATIVA/desativa a barra (foca o 1o menu, sem abrir). Setas navegam; Enter/abaixo abre
+          setMenuNavIdx((cur) => {
+            if (cur !== null) return null;
+            (document.activeElement as HTMLElement | null)?.blur?.(); // tira o foco do input pra a barra ter o teclado
+            return 0;
+          });
+        }
+      }
+    };
+    const onBlur = (): void => {
+      altTap = false;
+      setAltHeld(false);
+      setMenuNavIdx(null); // perdeu o foco da janela -> sai da navegacao da barra
+    };
+    // Alt+CLIQUE e o conta-gotas: clicar com o Alt segurado NAO e um tap (senao soltar o Alt
+    // depois de picar a cor ativaria a barra de menu sem querer)
+    const onMouseDown = (): void => {
+      altTap = false;
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("mousedown", onMouseDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("mousedown", onMouseDown);
+    };
+  }, [openTitlebarMenu]);
+
+  // barra ATIVADA (menuNavIdx != null, sem popup aberto): setas movem o foco entre os menus, Enter/
+  // seta-baixo ABRE, letra vai direto, Esc/Alt saem. So enquanto NENHUM popup esta aberto (com o
+  // popup nativo aberto o teclado e dele: setas/Enter/Esc funcionam la dentro).
+  useEffect(() => {
+    if (menuNavIdx === null) return;
+    const onKey = (e: KeyboardEvent): void => {
+      // TRAVA: se o foco caiu num campo de texto, sai da barra e deixa a tecla passar (nao trapear)
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) {
+        setMenuNavIdx(null);
+        return;
+      }
+      if (e.key === "ArrowRight" && !e.altKey) {
+        e.preventDefault();
+        setMenuNavIdx((i) => ((i ?? -1) + 1) % TB_MENUS.length);
+      } else if (e.key === "ArrowLeft" && !e.altKey) {
+        e.preventDefault();
+        setMenuNavIdx((i) => ((i ?? 0) - 1 + TB_MENUS.length) % TB_MENUS.length);
+      } else if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openTitlebarMenu(menuNavIdx, true); // abre o menu em foco (Esc dentro dele volta pra barra)
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setMenuNavIdx(null); // sai da barra
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        // letra (sem Alt): mnemonico abre o menu; qualquer outra imprimivel SAI da barra (nao trapeia)
+        const idx = TB_MENUS.findIndex((m) => m.alt === e.key.toLowerCase());
+        if (idx >= 0) {
+          e.preventDefault();
+          openTitlebarMenu(idx, true);
+        } else {
+          setMenuNavIdx(null);
+        }
+      }
+    };
+    // clicar fora dos botoes do menu sai da barra
+    const onDown = (e: MouseEvent): void => {
+      if (!(e.target as HTMLElement)?.closest?.(".tb-nav")) setMenuNavIdx(null);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onDown);
+    };
+  }, [menuNavIdx, openTitlebarMenu]);
+
+  // popup aberto POR teclado fechou (Esc/selecionou)? volta pra barra ativada (Esc de novo sai).
+  // So quando openMenuIdx faz aberto -> fechado (-1); hover-switch vai idx1 -> idx2, nao dispara.
+  useEffect(() => {
+    if (prevOpenMenuRef.current >= 0 && openMenuIdx === -1 && navReturnRef.current !== null) {
+      setMenuNavIdx(navReturnRef.current);
+      navReturnRef.current = null;
+    }
+    prevOpenMenuRef.current = openMenuIdx;
+  }, [openMenuIdx]);
 
   const cursor = panning ? (dragging.current ? "grabbing" : "grab") : "crosshair";
 
@@ -929,23 +1318,28 @@ export function App(): JSX.Element {
         {/* .menuopen: com popup aberto o :hover congela no botao clicado (mouse capturado);
             a classe neutraliza o hover e so o .open (vindo do main) acende */}
         <div className={"tb-nav" + (openMenuIdx >= 0 ? " menuopen" : "")}>
-          {["Arquivo", "Editar", "Exibir", "Janela", "Ajuda"].map((label, i) => (
-            <button
-              key={label}
-              className={"tb-menub" + (openMenuIdx === i ? " open" : "")}
-              onClick={(e) => {
-                e.currentTarget.blur();
-                const bar = e.currentTarget.parentElement;
-                const rects = bar
-                  ? [...bar.querySelectorAll("button.tb-menub")].map((b, j) => {
-                      const r = b.getBoundingClientRect();
-                      return { index: j, x1: r.left, x2: r.right };
-                    })
-                  : [];
-                void window.api.popupMenuItem(i, e.currentTarget.getBoundingClientRect().left, rects);
-              }}
-            >{label}</button>
-          ))}
+          {TB_MENUS.map(({ label, alt }, i) => {
+            // sublinha a letra do acelerador enquanto o Alt esta segurado (padrao Windows)
+            const ai = altHeld ? label.toLowerCase().indexOf(alt) : -1;
+            return (
+              <button
+                key={label}
+                className={"tb-menub" + (openMenuIdx === i ? " open" : "") + (menuNavIdx === i ? " navfocus" : "")}
+                title={`${label} (Alt+${alt.toUpperCase()})`}
+                onClick={() => openTitlebarMenu(i)}
+              >
+                {ai < 0 ? (
+                  label
+                ) : (
+                  <>
+                    {label.slice(0, ai)}
+                    <u>{label[ai]}</u>
+                    {label.slice(ai + 1)}
+                  </>
+                )}
+              </button>
+            );
+          })}
         </div>
         <div className="tb-navsep" />
         <div className="tb-title">
@@ -954,6 +1348,33 @@ export function App(): JSX.Element {
           {fileName && <span className="tb-ctx" title={path ?? ""}>{fileName}{dirty ? " *" : ""}</span>}
         </div>
       </div>
+
+      {/* banner de atualizacao (electron-updater): discreto, abaixo da barra de titulo */}
+      {upd && (
+        <div className={"updbar" + (upd.state === "error" ? " err" : "")}>
+          <span className="updbar-txt">
+            {upd.state === "checking" && "verificando atualizacoes..."}
+            {upd.state === "none" && "nenhuma atualizacao disponivel"}
+            {upd.state === "dev" && "verificacao disponivel so no app instalado"}
+            {upd.state === "available" && `v${upd.version} disponivel`}
+            {upd.state === "downloading" && `baixando v${upd.version ?? "?"}... ${upd.percent ?? 0}%`}
+            {upd.state === "downloaded" && `atualizacao pronta (v${upd.version ?? "?"})`}
+            {upd.state === "error" && `erro ao atualizar: ${upd.error ?? "?"}`}
+          </span>
+          {upd.state === "downloading" && (
+            <span className="updbar-prog">
+              <span style={{ width: `${upd.percent ?? 0}%` }} />
+            </span>
+          )}
+          {upd.state === "available" && (
+            <button className="updbar-btn" onClick={() => void window.api.updDownload()}>Baixar</button>
+          )}
+          {upd.state === "downloaded" && (
+            <button className="updbar-btn" onClick={() => void window.api.updInstall()}>Reiniciar agora</button>
+          )}
+          <button className="updbar-close" onClick={() => setUpd(null)} title="fechar">×</button>
+        </div>
+      )}
 
       {showPrefs && (
         <div className="modal-backdrop" onClick={() => setShowPrefs(false)}>
@@ -998,9 +1419,127 @@ export function App(): JSX.Element {
                   </span>
                 </label>
               </div>
+              <div className="prefsec">
+                <div className="prefsec-title">Atualizacoes</div>
+                <label className="preflabel">
+                  <input
+                    type="checkbox"
+                    checked={updOnBoot}
+                    onChange={(e) => {
+                      setUpdOnBoot(e.target.checked);
+                      localStorage.setItem("tilestudio:updOnBoot", e.target.checked ? "1" : "0");
+                    }}
+                  />
+                  <span>
+                    Verificar atualizacoes ao iniciar
+                    <small>checa em segundo plano ~10s depois de abrir; so avisa se houver versao nova</small>
+                  </span>
+                </label>
+              </div>
             </div>
             <div className="prefswin-foot">
               <button className="primary" onClick={() => setShowPrefs(false)}>Fechar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* modal de CONFIRMACAO generico (substitui o window.confirm, que trava o foco no Electron) */}
+      {confirmState && (
+        <div className="modal-backdrop" onClick={() => setConfirmState(null)}>
+          <div className="prefswin" onClick={(e) => e.stopPropagation()}>
+            <div className="prefswin-head">
+              <span>Confirmar</span>
+              <button className="prefswin-close" onClick={() => setConfirmState(null)} title="fechar (Esc)">×</button>
+            </div>
+            <div className="prefswin-body">
+              <div className="confirm-msg">{confirmState.msg}</div>
+            </div>
+            <div className="prefswin-foot">
+              <button className="secondary" onClick={() => setConfirmState(null)}>Cancelar</button>
+              <button
+                className="primary"
+                onClick={() => {
+                  confirmState.onOk();
+                  setConfirmState(null);
+                }}
+              >
+                {confirmState.okLabel ?? "OK"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* mini-modal de PROMPT com input (substitui o window.prompt): renomear presets, ir-para offset */}
+      {promptState && (
+        <div className="modal-backdrop" onClick={() => setPromptState(null)}>
+          <div className="prefswin" onClick={(e) => e.stopPropagation()}>
+            <div className="prefswin-head">
+              <span>{promptState.title}</span>
+              <button className="prefswin-close" onClick={() => setPromptState(null)} title="fechar (Esc)">×</button>
+            </div>
+            <div className="prefswin-body">
+              <input
+                className="prompt-input"
+                type="text"
+                autoFocus
+                spellCheck={false}
+                value={promptState.value}
+                onChange={(e) => setPromptState((s) => (s ? { ...s, value: e.target.value } : s))}
+                onFocus={(e) => e.target.select()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    promptState.onOk(promptState.value);
+                    setPromptState(null);
+                  }
+                }}
+              />
+              {promptState.hint && <div className="hint">{promptState.hint}</div>}
+            </div>
+            <div className="prefswin-foot">
+              <button className="secondary" onClick={() => setPromptState(null)}>Cancelar</button>
+              <button
+                className="primary"
+                onClick={() => {
+                  promptState.onOk(promptState.value);
+                  setPromptState(null);
+                }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* modal Sobre (o main manda menu:about; dialog nativo travava o foco) */}
+      {showAbout && (
+        <div className="modal-backdrop" onClick={() => setShowAbout(false)}>
+          <div className="prefswin" onClick={(e) => e.stopPropagation()}>
+            <div className="prefswin-head">
+              <span>Sobre</span>
+              <button className="prefswin-close" onClick={() => setShowAbout(false)} title="fechar (Esc)">×</button>
+            </div>
+            <div className="prefswin-body">
+              <div className="about-logo">tile studio<span className="caret">_</span></div>
+              <div className="about-title">Editor/visualizador de tiles graficos (estilo Tile Molester)</div>
+              <div className="kv"><span>Versao</span><b>v{appInfo?.version ?? "?"}</b></div>
+              <div className="kv"><span>Suite</span><b>TIM Studio · Tile Studio · LoM Studio</b></div>
+              <div className="kv">
+                <span>Runtimes</span>
+                <b>Electron {appInfo?.electron ?? "?"} · Chrome {appInfo?.chrome ?? "?"} · Node {appInfo?.node ?? "?"}</b>
+              </div>
+              <div className="prefsec">
+                <div className="prefsec-title">Creditos</div>
+                <p className="about-lic">
+                  Inspirado no Tile Molester (SnowBro). Parte da suite de ferramentas do projeto
+                  Legend of Mana PSX PT-BR.
+                </p>
+              </div>
+            </div>
+            <div className="prefswin-foot">
+              <button className="primary" onClick={() => setShowAbout(false)}>Fechar</button>
             </div>
           </div>
         </div>
@@ -1024,6 +1563,11 @@ export function App(): JSX.Element {
             title="NAVEGAR: clicar-e-arrastar move a imagem (segurar Espaco tambem)"
           >nav</button>
           <button
+            className={"tool" + (tool === "fill" && !tempPan ? " on" : "")}
+            onClick={() => setTool("fill")}
+            title="BALDE: clique preenche a area contigua da mesma cor com a cor de pintura (flood fill 4 direcoes, limitado a vista atual; 1 clique = 1 desfazer)"
+          >bal</button>
+          <button
             className={"tool" + (tool === "select" && !tempPan ? " on" : "")}
             onClick={() => setTool("select")}
             title="SELECIONAR: arraste um retangulo; Ctrl+C copia (interno + imagem pro sistema), Ctrl+V cola no canto da selecao (aceita imagem do Photoshop, cores ajustadas pra paleta); Esc limpa"
@@ -1046,7 +1590,20 @@ export function App(): JSX.Element {
           <label>tile altura{num(tileH, setTileH, 1)}</label>
           <label>colunas{num(cols, setCols, 1)}</label>
           <label>linhas (tiles){num(tileRows, setTileRows, 1)}</label>
-          <label>offset (bytes){num(offset, setOffset, 0)}</label>
+          {/* offset em TEXTO: aceita decimal (6656) e hex (0x1A00/$1A00); Enter/blur aplica */}
+          <label>offset (bytes)
+            <input
+              type="text"
+              value={offsetText}
+              spellCheck={false}
+              onChange={(e) => setOffsetText(e.target.value)}
+              onBlur={commitOffsetText}
+              onKeyDown={(e) => { if (e.key === "Enter") commitOffsetText(); }}
+              title={`decimal ou hex com prefixo 0x/$ · atual: ${offset} (${fmtHex(offset)}) · Ctrl+G = ir para (hex)`}
+            />
+          </label>
+          {/* eco do offset atual tambem em hex (pra conferir alinhamento sem converter de cabeca) */}
+          <div className="offsethex">offset {offset} ({fmtHex(offset)})</div>
           {mode === "linear" && indexed && (
             <label className="chk"><input type="checkbox" checked={reverse} onChange={(e) => setReverse(e.target.checked)} /> reverse (bits)</label>
           )}
@@ -1094,10 +1651,16 @@ export function App(): JSX.Element {
         </div>
 
         <div className="nav">
-          <button className="secondary" onClick={() => step(-tileRows)}>{"<<"}</button>
-          <button className="secondary" onClick={() => step(-1)}>{"<"}</button>
-          <button className="secondary" onClick={() => step(1)}>{">"}</button>
-          <button className="secondary" onClick={() => step(tileRows)}>{">>"}</button>
+          <button className="secondary" onClick={() => step(-tileRows)} title="pagina pra tras (PageUp)">{"<<"}</button>
+          <button className="secondary" onClick={() => step(-1)} title="1 linha de tiles pra tras (seta cima)">{"<"}</button>
+          <button className="secondary" onClick={() => step(1)} title="1 linha de tiles pra frente (seta baixo)">{">"}</button>
+          <button className="secondary" onClick={() => step(tileRows)} title="pagina pra frente (PageDown)">{">>"}</button>
+        </div>
+        {/* nudge FINO (+-1 byte) pra achar o alinhamento dos tiles + ir-para offset em hex */}
+        <div className="nav">
+          <button className="secondary" onClick={() => setOffset((o) => Math.max(0, o - 1))} title="offset -1 byte (Shift+seta esquerda)">-1B</button>
+          <button className="secondary" onClick={() => setOffset((o) => o + 1)} title="offset +1 byte (Shift+seta direita)">+1B</button>
+          <button className="secondary" onClick={gotoOffset} title="ir para offset em hex (Ctrl+G)">goto</button>
         </div>
 
         <div className="btnrow">
@@ -1115,6 +1678,15 @@ export function App(): JSX.Element {
           <button className="secondary" onClick={saveAs} disabled={!raw}>Salvar como</button>
         </div>
         <button className="secondary" onClick={exportPng} disabled={!view}>Exportar PNG</button>
+        {selRect && (
+          <button
+            className="secondary"
+            onClick={exportSelPng}
+            title="salva SO o retangulo selecionado como PNG (mesmo caminho do Exportar PNG)"
+          >
+            Exportar selecao (PNG)
+          </button>
+        )}
         <button
           className="secondary"
           onClick={importPng}
@@ -1277,8 +1849,9 @@ export function App(): JSX.Element {
 
         {view && (
           <>
-            <div className="kv"><span>Ferramenta</span><b>{panning ? "navegar (pan)" : "editar"}</b></div>
+            <div className="kv"><span>Ferramenta</span><b>{panning ? "navegar (pan)" : tool === "select" ? "selecionar" : tool === "fill" ? "balde" : "editar"}</b></div>
             <div className="kv"><span>Historico</span><b>{histLen.u} desfazer / {histLen.r} refazer</b></div>
+            <div className="kv"><span>Offset</span><b>{offset} ({fmtHex(offset)})</b></div>
             <div className="kv"><span>Bytes/tile</span><b>{bytesPerTile}</b></div>
             <div className="kv"><span>Bytes/linha</span><b>{bytesPerTileRow}</b></div>
             <div className="kv"><span>Canvas</span><b>{view.width}×{view.height}</b></div>
@@ -1288,7 +1861,8 @@ export function App(): JSX.Element {
         )}
         <p className="hint">
           Clone do Tile Molester. Ctrl+Z desfaz edicoes de pixel (nao mexe em bpp/zoom/offset).
-          Segure Espaco pra pan temporario. Alt+clique = conta-gotas. Fonte LoM = 1bpp planar, tile 16×12.
+          Segure Espaco pra pan temporario. Alt+clique = conta-gotas. Ctrl+G = ir para offset (hex).
+          Shift+setas esquerda/direita = offset ±1 byte. Fonte LoM = 1bpp planar, tile 16×12.
         </p>
       </aside>
       </div>
